@@ -21,9 +21,10 @@ npm run preview    # serve the production build locally
 ```
 
 Pushing to `main` deploys automatically to GitHub Pages via
-`.github/workflows/deploy.yml` (enable **Settings → Pages → Source:
-GitHub Actions** once in the repo settings). The Vite config uses
-`base: "./"` so the build works from a project-site subpath.
+`.github/workflows/deploy.yml`. The workflow enables the Pages site
+itself on the first run; if that fails in your fork, flip
+**Settings → Pages → Source: GitHub Actions** once manually. The Vite
+config uses `base: "./"` so the build works from a project-site subpath.
 
 ## How the engine works
 
