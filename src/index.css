@@ -203,7 +203,12 @@ button {
   font-weight: 600;
 }
 
-.reset:hover { border-color: var(--accent); }
+.reset:hover:not(:disabled) { border-color: var(--accent); }
+
+.reset:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* ---- Panels ---- */
 
