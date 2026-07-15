@@ -47,9 +47,6 @@ export default function ChessEngineLab() {
   const [depth, setDepth] = useState(3);
   const [status, setStatus] = useState("playing");
   const [telemetry, setTelemetry] = useState(null); // last engine search result
-  // Snapshots taken just before each of your moves, so Undo can rewind a
-  // full move pair (your move + the engine's reply) in one click.
-  const [past, setPast] = useState([]);
 
   const workerRef = useRef(null);
   const depthRef = useRef(depth);
@@ -110,7 +107,6 @@ export default function ChessEngineLab() {
 
     const move = targets.find((m) => m.toR === r && m.toC === c);
     if (move) {
-      setPast((p) => [...p, { board, lastMove, telemetry, status, history }]);
       const next = applyMove(board, move);
       const newStatus = getGameStatus(next, BLACK);
       setBoard(next);
@@ -136,25 +132,6 @@ export default function ChessEngineLab() {
     }
   };
 
-  const undo = () => {
-    if (past.length === 0) return;
-    const prev = past[past.length - 1];
-    if (thinking) {
-      // The engine is still searching a position we're abandoning.
-      workerRef.current?.terminate();
-      workerRef.current = makeWorker();
-    }
-    setPast((p) => p.slice(0, -1));
-    setBoard(prev.board);
-    setLastMove(prev.lastMove);
-    setTelemetry(prev.telemetry);
-    setStatus(prev.status);
-    setHistory(prev.history);
-    setTurn(WHITE);
-    setSelected(null);
-    setThinking(false);
-  };
-
   const reset = () => {
     // A search may be mid-flight; kill the worker so its result never lands.
     workerRef.current?.terminate();
@@ -167,7 +144,6 @@ export default function ChessEngineLab() {
     setThinking(false);
     setStatus("playing");
     setTelemetry(null);
-    setPast([]);
   };
 
   // Static evaluation of the position on the board right now.
@@ -254,14 +230,6 @@ export default function ChessEngineLab() {
                 aria-label="Engine strength, search depth 1 to 6"
               />
             </label>
-            <button
-              className="reset"
-              onClick={undo}
-              disabled={past.length === 0}
-              title="Take back your last move and the engine's reply"
-            >
-              Undo move
-            </button>
             <button className="reset" onClick={reset}>New game</button>
           </div>
         </section>
