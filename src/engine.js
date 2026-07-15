@@ -45,16 +45,16 @@ export function cloneBoard(board) {
 /* 1. Move generation                                                  */
 /* ------------------------------------------------------------------ */
 
-const KNIGHT_JUMPS = [
+export const KNIGHT_JUMPS = [
   [-2, -1], [-2, 1], [-1, -2], [-1, 2],
   [1, -2], [1, 2], [2, -1], [2, 1],
 ];
-const KING_STEPS = [
+export const KING_STEPS = [
   [-1, -1], [-1, 0], [-1, 1], [0, -1],
   [0, 1], [1, -1], [1, 0], [1, 1],
 ];
-const BISHOP_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
-const ROOK_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+export const BISHOP_DIRS = [[-1, -1], [-1, 1], [1, -1], [1, 1]];
+export const ROOK_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 const onBoard = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
 
@@ -503,6 +503,8 @@ export function search(board, depth, alpha, beta, color, stats) {
  *     stats,       // { nodes, pruned } for the whole search
  *     depth,       // the depth that was searched
  *     candidates,  // ranked [{ move, score }], best first (top 5)
+ *     allMoves,    // the full ranked list (used by teacher mode to grade
+ *                  // whatever move the player actually chose)
  *   }
  */
 export function bestMove(board, color, depth) {
@@ -526,6 +528,7 @@ export function bestMove(board, color, depth) {
     stats,
     depth,
     candidates: scored.slice(0, 5),
+    allMoves: scored,
   };
 }
 

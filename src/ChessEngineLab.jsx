@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useMemo, useEffect, useRef, useState } from "react";
 import {
   WHITE,
   BLACK,
@@ -10,11 +10,9 @@ import {
   moveToString,
   squareName,
 } from "./engine.js";
-
-const GLYPHS = {
-  wk: "♚", wq: "♛", wr: "♜", wb: "♝", wn: "♞", wp: "♟",
-  bk: "♚", bq: "♛", br: "♜", bb: "♝", bn: "♞", bp: "♟",
-};
+import { classifyMove, threatReport } from "./coach.js";
+import { LESSONS } from "./lessons.js";
+import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
 
 const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthless"];
 
@@ -47,6 +45,13 @@ export default function ChessEngineLab() {
   const [depth, setDepth] = useState(3);
   const [status, setStatus] = useState("playing");
   const [telemetry, setTelemetry] = useState(null); // last engine search result
+  // Teacher mode state.
+  const [teacherMode, setTeacherMode] = useState(false);
+  const [coachReport, setCoachReport] = useState(null); // grading of your last move
+  const [threats, setThreats] = useState(null); // dangers after the engine's reply
+  const [hint, setHint] = useState(null); // suggested move for you
+  const [hintLoading, setHintLoading] = useState(false);
+  const [lessonIndex, setLessonIndex] = useState(0);
   // Snapshots taken just before each of your moves, so Undo can rewind a
   // full move pair (your move + the engine's reply) in one click.
   const [past, setPast] = useState([]);
@@ -57,14 +62,25 @@ export default function ChessEngineLab() {
   const boardRef = useRef(board);
   boardRef.current = board;
 
+  // Grading quality shouldn't drop with an easy opponent, nor stall the
+  // reply at high depths: analyze at depth 3-4 regardless of the slider.
+  const coachDepth = Math.min(Math.max(depth, 3), 4);
+
   const makeWorker = useCallback(() => {
     const worker = new Worker(new URL("./engineWorker.js", import.meta.url), {
       type: "module",
     });
     worker.onmessage = (event) => {
-      const result = event.data;
+      const msg = event.data;
+      if (msg.type === "hint") {
+        setHintLoading(false);
+        setHint(msg.result.move ? { move: msg.result.move, score: msg.result.score } : null);
+        return;
+      }
+      const result = msg.reply;
       setThinking(false);
       setTelemetry(result);
+      if (msg.coach) setCoachReport(msg.coach);
       if (!result.move) return;
       const next = applyMove(boardRef.current, result.move);
       const newStatus = getGameStatus(next, WHITE);
@@ -72,6 +88,7 @@ export default function ChessEngineLab() {
       setStatus(newStatus);
       setLastMove(result.move);
       setTurn(WHITE);
+      setThreats(threatReport(next));
       setHistory((h) => [
         ...h,
         moveToString(result.move) +
@@ -85,15 +102,6 @@ export default function ChessEngineLab() {
     workerRef.current = makeWorker();
     return () => workerRef.current?.terminate();
   }, [makeWorker]);
-
-  const startEngine = useCallback((position) => {
-    setThinking(true);
-    workerRef.current.postMessage({
-      board: position,
-      color: BLACK,
-      depth: depthRef.current,
-    });
-  }, []);
 
   // Legal moves for the currently selected piece.
   const targets = useMemo(() => {
@@ -110,13 +118,19 @@ export default function ChessEngineLab() {
 
     const move = targets.find((m) => m.toR === r && m.toC === c);
     if (move) {
-      setPast((p) => [...p, { board, lastMove, telemetry, status, history }]);
+      setPast((p) => [
+        ...p,
+        { board, lastMove, telemetry, status, history, coachReport, threats },
+      ]);
       const next = applyMove(board, move);
       const newStatus = getGameStatus(next, BLACK);
       setBoard(next);
       setSelected(null);
       setLastMove(move);
       setStatus(newStatus);
+      setHint(null);
+      setCoachReport(null);
+      setThreats(null);
       setHistory((h) => [
         ...h,
         moveToString(move) +
@@ -124,7 +138,18 @@ export default function ChessEngineLab() {
       ]);
       if (newStatus === "checkmate" || newStatus === "stalemate") return;
       setTurn(BLACK);
-      startEngine(next);
+      setThinking(true);
+      workerRef.current.postMessage({
+        type: "move",
+        board: next,
+        color: BLACK,
+        depth: depthRef.current,
+        // In teacher mode, also grade the move just played: analyze the
+        // position it was played *in* (the pre-move board).
+        coach: teacherMode
+          ? { board, color: WHITE, depth: coachDepth, played: move }
+          : null,
+      });
       return;
     }
 
@@ -134,6 +159,17 @@ export default function ChessEngineLab() {
     } else {
       setSelected(null);
     }
+  };
+
+  const requestHint = () => {
+    if (thinking || hintLoading || gameOver || turn !== WHITE) return;
+    setHintLoading(true);
+    workerRef.current.postMessage({
+      type: "hint",
+      board,
+      color: WHITE,
+      depth: coachDepth,
+    });
   };
 
   const undo = () => {
@@ -150,6 +186,10 @@ export default function ChessEngineLab() {
     setTelemetry(prev.telemetry);
     setStatus(prev.status);
     setHistory(prev.history);
+    setCoachReport(prev.coachReport);
+    setThreats(prev.threats);
+    setHint(null);
+    setHintLoading(false);
     setTurn(WHITE);
     setSelected(null);
     setThinking(false);
@@ -167,6 +207,10 @@ export default function ChessEngineLab() {
     setThinking(false);
     setStatus("playing");
     setTelemetry(null);
+    setCoachReport(null);
+    setThreats(null);
+    setHint(null);
+    setHintLoading(false);
     setPast([]);
   };
 
@@ -182,6 +226,41 @@ export default function ChessEngineLab() {
     }
     return rows;
   }, [history]);
+
+  // Turn the raw coach report into display-ready grading.
+  const grading = useMemo(() => {
+    if (!coachReport || coachReport.playedScore == null || !coachReport.best) return null;
+    const { played, best, bestScore, playedScore } = coachReport;
+    const isBest =
+      played.fromR === best.fromR && played.fromC === best.fromC &&
+      played.toR === best.toR && played.toC === best.toC;
+    const graded = isBest
+      ? { verdict: "Best move!", tone: "good" }
+      : classifyMove(bestScore, playedScore);
+    return {
+      ...graded,
+      isBest,
+      playedStr: moveToString(played),
+      bestStr: moveToString(best),
+      playedScore,
+      bestScore,
+    };
+  }, [coachReport]);
+
+  const threatSquares = useMemo(() => {
+    if (!teacherMode || !threats) return new Set();
+    return new Set(threats.squares.map((s) => `${s.r}-${s.c}`));
+  }, [teacherMode, threats]);
+
+  const hintSquares = useMemo(() => {
+    if (!teacherMode || !hint) return new Set();
+    return new Set([
+      `${hint.move.fromR}-${hint.move.fromC}`,
+      `${hint.move.toR}-${hint.move.toC}`,
+    ]);
+  }, [teacherMode, hint]);
+
+  const lesson = LESSONS[lessonIndex];
 
   return (
     <div className="lab">
@@ -215,6 +294,8 @@ export default function ChessEngineLab() {
                   dark ? "dark" : "light",
                   isSelected ? "selected" : "",
                   isLast ? "last-move" : "",
+                  threatSquares.has(`${r}-${c}`) ? "threat" : "",
+                  hintSquares.has(`${r}-${c}`) ? "hint" : "",
                 ].join(" ");
                 return (
                   <button
@@ -263,10 +344,68 @@ export default function ChessEngineLab() {
               Undo move
             </button>
             <button className="reset" onClick={reset}>New game</button>
+            <label className="teacher-toggle">
+              <input
+                type="checkbox"
+                checked={teacherMode}
+                onChange={(e) => setTeacherMode(e.target.checked)}
+              />
+              <span>Teacher mode</span>
+            </label>
           </div>
         </section>
 
         <aside className="panel-column">
+          {teacherMode && (
+            <section className="panel panel-coach" aria-label="Coach">
+              <h2>Coach</h2>
+              {grading ? (
+                <div className="coach-grade">
+                  <span className={`badge badge-${grading.tone}`}>{grading.verdict}</span>
+                  <p>
+                    You played <strong>{grading.playedStr}</strong>{" "}
+                    ({formatScore(grading.playedScore)}).
+                    {!grading.isBest && (
+                      <>
+                        {" "}Coach preferred <strong>{grading.bestStr}</strong>{" "}
+                        ({formatScore(grading.bestScore)}).
+                      </>
+                    )}
+                  </p>
+                </div>
+              ) : (
+                <p className="muted">
+                  Make a move and I'll grade it against the engine's best choice
+                  for you.
+                </p>
+              )}
+              {threats && threats.warnings.length > 0 && (
+                <ul className="threat-list">
+                  {threats.warnings.map((w, i) => (
+                    <li key={i}>{w}</li>
+                  ))}
+                </ul>
+              )}
+              {threats && threats.warnings.length === 0 && grading && (
+                <p className="muted">No immediate tactics against you. Keep developing.</p>
+              )}
+              <div className="hint-row">
+                <button
+                  className="reset"
+                  onClick={requestHint}
+                  disabled={thinking || hintLoading || gameOver || turn !== WHITE}
+                >
+                  {hintLoading ? "Analyzing…" : "Hint"}
+                </button>
+                {hint && (
+                  <span className="hint-text">
+                    Try <strong>{moveToString(hint.move)}</strong> ({formatScore(hint.score)})
+                  </span>
+                )}
+              </div>
+            </section>
+          )}
+
           <section className="panel" aria-label="Telemetry">
             <h2>Telemetry</h2>
             <div className="eval-bar" aria-label={`Evaluation ${formatScore(staticEval)} pawns`}>
@@ -336,6 +475,51 @@ export default function ChessEngineLab() {
           </section>
         </aside>
       </main>
+
+      {teacherMode && (
+        <section className="school" aria-label="Chess school">
+          <h2>Chess school</h2>
+          <div className="school-nav" role="tablist" aria-label="Lessons">
+            {LESSONS.map((l, i) => (
+              <button
+                key={l.id}
+                className={"chip" + (i === lessonIndex ? " chip-active" : "")}
+                onClick={() => setLessonIndex(i)}
+                role="tab"
+                aria-selected={i === lessonIndex}
+              >
+                {i + 1}. {l.title}
+              </button>
+            ))}
+          </div>
+          <div className="school-lesson">
+            <MiniBoard position={lesson.position} highlights={lesson.highlights} />
+            <div className="school-text">
+              <h3>{lesson.title}</h3>
+              <p>{lesson.body}</p>
+              <div className="school-pager">
+                <button
+                  className="reset"
+                  onClick={() => setLessonIndex((i) => Math.max(0, i - 1))}
+                  disabled={lessonIndex === 0}
+                >
+                  ← Previous
+                </button>
+                <span className="muted">
+                  {lessonIndex + 1} / {LESSONS.length}
+                </span>
+                <button
+                  className="reset"
+                  onClick={() => setLessonIndex((i) => Math.min(LESSONS.length - 1, i + 1))}
+                  disabled={lessonIndex === LESSONS.length - 1}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <footer className="lab-footer">
         <h2>How the engine thinks</h2>

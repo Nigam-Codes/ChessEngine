@@ -126,6 +126,10 @@ button {
   box-shadow: inset 0 0 0 4px var(--square-selected);
 }
 
+.square.threat { box-shadow: inset 0 0 0 4px rgba(255, 107, 107, 0.85); }
+
+.square.hint { box-shadow: inset 0 0 0 4px rgba(94, 210, 144, 0.85); }
+
 .piece {
   font-size: clamp(1.4rem, 5.5vmin, 2.6rem);
   line-height: 1;
@@ -210,6 +214,22 @@ button {
   cursor: not-allowed;
 }
 
+.teacher-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  padding: 0.5rem 0;
+  cursor: pointer;
+}
+
+.teacher-toggle input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 /* ---- Panels ---- */
 
 .panel-column {
@@ -281,6 +301,46 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- Coach panel ---- */
+
+.panel-coach { border-color: var(--accent); }
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-good { background: rgba(94, 210, 144, 0.18); color: #5ed290; }
+.badge-warn { background: rgba(242, 193, 78, 0.18); color: #f2c14e; }
+.badge-bad { background: rgba(255, 107, 107, 0.18); color: var(--check-red); }
+
+.coach-grade p { margin: 0.45rem 0 0; font-size: 0.92rem; }
+
+.threat-list {
+  margin: 0.6rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  color: var(--check-red);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.hint-row {
+  margin-top: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.hint-text { font-size: 0.92rem; color: #5ed290; }
+
 /* ---- Candidates ---- */
 
 .candidates {
@@ -348,6 +408,95 @@ button {
 }
 
 .move-num { color: var(--text-muted); width: 2rem; }
+
+/* ---- Chess school ---- */
+
+.school {
+  margin-top: 2rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+}
+
+.school h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.school-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.chip {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.chip:hover { border-color: var(--accent); }
+
+.chip-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.school-lesson {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+@media (max-width: 640px) {
+  .school-lesson { grid-template-columns: 1fr; }
+}
+
+.mini-board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  width: min(260px, 100%);
+  aspect-ratio: 1;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.mini-square {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mini-square.light { background: var(--square-light); }
+.mini-square.dark { background: var(--square-dark); }
+.mini-square.hl { box-shadow: inset 0 0 0 3px var(--square-selected); }
+
+.mini-square .piece { font-size: clamp(1rem, 3vmin, 1.5rem); }
+
+.school-text h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+
+.school-text p {
+  margin: 0;
+  font-size: 0.93rem;
+  color: var(--text-muted);
+  max-width: 60ch;
+}
+
+.school-pager {
+  margin-top: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 
 /* ---- Footer ---- */
 

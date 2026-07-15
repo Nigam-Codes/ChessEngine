@@ -26,6 +26,29 @@ itself on the first run; if that fails in your fork, flip
 **Settings → Pages → Source: GitHub Actions** once manually. The Vite
 config uses `base: "./"` so the build works from a project-site subpath.
 
+## Teacher mode
+
+Flip the **Teacher mode** switch under the board to turn the lab into a
+tutor:
+
+- **Move grading** — after each of your moves, the coach analyzes the
+  position you moved in and grades your choice against the engine's best
+  (Best move! / Good / Inaccuracy / Mistake / Blunder), showing both
+  scores so you can see exactly how much a mistake cost.
+- **Threat warnings** — after every engine reply, the coach scans the
+  board for hanging pieces, forks, and pins against you, explains each in
+  plain language, and marks the squares in red.
+- **Hint button** — stuck? Ask the coach for a suggested move; it's
+  highlighted on the board in green with its score.
+- **Chess school** — ten short lessons with diagrams covering the basics
+  behind the tactics: piece values, center control, development, hanging
+  pieces, forks, pins, skewers, discovered attacks, back-rank mates, and
+  counting attackers vs defenders.
+
+The coaching logic lives in `src/coach.js` — small, readable functions
+(`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
+same move generator the engine uses.
+
 ## How the engine works
 
 The board is an 8×8 array of strings like `"wp"` (white pawn), `"bk"`
