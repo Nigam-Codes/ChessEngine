@@ -51,11 +51,15 @@ for (const drill of DRILLS) {
   });
 }
 
-test("back-rank drill ends in checkmate", () => {
-  const drill = DRILLS.find((d) => d.id === "backrank");
-  let board = cloneBoard(drill.position);
-  board = applyMove(board, findMove(legalMoves(board, WHITE), drill.steps[0].accept[0]));
-  assert.equal(getGameStatus(board, BLACK), "checkmate");
-});
+for (const drill of DRILLS.filter((d) => d.endsInMate)) {
+  test(`drill "${drill.id}" ends in checkmate`, () => {
+    let board = cloneBoard(drill.position);
+    for (const step of drill.steps) {
+      board = applyMove(board, findMove(legalMoves(board, WHITE), step.accept[0]));
+      if (step.reply) board = applyMove(board, findMove(legalMoves(board, BLACK), step.reply));
+    }
+    assert.equal(getGameStatus(board, BLACK), "checkmate");
+  });
+}
 
 console.log(`\n${passed} tests passed.`);

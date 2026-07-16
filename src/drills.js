@@ -56,6 +56,32 @@ export const DRILLS = [
       "In your games, watch for enemy king and heavy pieces standing a knight's jump apart — the engine's coach will flag forks against you, but finding them for yourself wins games.",
   },
   {
+    id: "pawnfork",
+    title: "The pawn fork",
+    tactic: "Offense",
+    intro:
+      "Forks aren't just for knights — a humble pawn can attack two pieces at once, and nothing trades cheaper. The black knight and bishop stand one push apart.",
+    position: pos({ c3: "wp", d3: "wp", c5: "bn", e5: "bb", g1: "wk", g8: "bk" }),
+    steps: [
+      {
+        task: "Push the pawn that attacks both minor pieces.",
+        accept: [mv("d3", "d4")],
+        reply: mv("c5", "e6"),
+        explain:
+          "One pawn, two targets worth three points each. Black can only save one piece.",
+        hint: { text: "From d4 a pawn attacks both c5 and e5.", arrow: mv("d3", "d4") },
+      },
+      {
+        task: "The knight fled. Take the bishop.",
+        accept: [mv("d4", "e5")],
+        reply: null,
+        explain: "A bishop for free. Pawn forks are the cheapest tactic in chess — watch for enemy pieces a pawn-push apart.",
+        hint: { text: "Capture on e5.", arrow: mv("d4", "e5") },
+      },
+    ],
+    outro: "Defensively: never park two pieces where a single pawn push hits both.",
+  },
+  {
     id: "pin",
     title: "Attack the pinned piece",
     tactic: "Offense",
@@ -134,6 +160,67 @@ export const DRILLS = [
       "Whenever two of your pieces share a line with something valuable beyond them, ask what the front piece could do *elsewhere*.",
   },
   {
+    id: "doubleattack",
+    title: "The queen's double attack",
+    tactic: "Offense",
+    intro:
+      "The queen's power is hitting two directions at once. Black's king is exposed on one diagonal and the rook on e5 sits loose on the fifth rank — find the square that attacks both.",
+    position: pos({ d1: "wq", g1: "wk", e8: "bk", e5: "br", a7: "bp" }),
+    steps: [
+      {
+        task: "Move the queen where it gives check and attacks the rook.",
+        accept: [mv("d1", "h5")],
+        reply: mv("e8", "d8"),
+        explain:
+          "Check along the diagonal, rook attacked along the rank. Black must answer the check first.",
+        hint: { text: "From h5 the queen sees e8 and e5 at once.", arrow: mv("d1", "h5") },
+      },
+      {
+        task: "The king stepped aside. Collect the rook.",
+        accept: [mv("h5", "e5")],
+        reply: null,
+        explain:
+          "Loose pieces drop off! Most queen tactics are exactly this: a check paired with an undefended piece.",
+        hint: { text: "Take on e5.", arrow: mv("h5", "e5") },
+      },
+    ],
+    outro:
+      "Defensive habit: keep your pieces defended. An undefended piece plus any check is a double attack waiting to happen.",
+  },
+  {
+    id: "removedefender",
+    title: "Remove the defender",
+    tactic: "Offense",
+    intro:
+      "Your rook pins the knight on d5 to the king — but the bishop on e6 guards it, so taking now is a bad trade. Get rid of the bodyguard first.",
+    position: pos({ d1: "wr", h3: "wb", g1: "wk", d8: "bk", d5: "bn", e6: "bb", h7: "bp" }),
+    steps: [
+      {
+        task: "Capture the knight's only defender.",
+        accept: [mv("h3", "e6")],
+        reply: mv("h7", "h6"),
+        explain:
+          "The bodyguard is gone, and the pinned knight still can't run. Black can only wait.",
+        hint: { text: "Your bishop can take on e6 — nothing recaptures.", arrow: mv("h3", "e6") },
+        traps: [
+          {
+            to: rc("d5"),
+            text: "Not yet — the bishop on e6 recaptures and you've traded a rook for a knight. Remove the defender first.",
+          },
+        ],
+      },
+      {
+        task: "Now win the pinned knight.",
+        accept: [mv("d1", "d5")],
+        reply: null,
+        explain:
+          "Rook takes knight, with check. When a defended piece is your target, ask: can I capture, chase away, or overload its defender?",
+        hint: { text: "Take on d5 with the rook.", arrow: mv("d1", "d5") },
+      },
+    ],
+    outro: "Every tactic has a defender-shaped weakness — count the guards, then subtract one.",
+  },
+  {
     id: "backrank",
     title: "Back-rank mate",
     tactic: "Offense",
@@ -151,6 +238,28 @@ export const DRILLS = [
     ],
     outro:
       "Defensive habit: before your rooks leave the back rank, give your king an escape square (a pawn nudge like h3).",
+    endsInMate: true,
+  },
+  {
+    id: "smothered",
+    title: "The smothered mate",
+    tactic: "Offense",
+    intro:
+      "Black's king is completely walled in by its own rook and pawns. Only a knight can reach past that wall — because only a knight attacks squares it doesn't travel through.",
+    position: pos({ h8: "bk", g8: "br", g7: "bp", h7: "bp", g5: "wn", g1: "wk" }),
+    steps: [
+      {
+        task: "Deliver checkmate with the knight.",
+        accept: [mv("g5", "f7")],
+        reply: null,
+        explain:
+          "Smothered mate! The king's own army blocks every escape square, and no black piece can capture the knight on f7.",
+        hint: { text: "From f7 the knight checks h8 — and nothing can take it.", arrow: mv("g5", "f7") },
+      },
+    ],
+    outro:
+      "A cramped king is a fragile king — as the defender, keep at least one flight square open.",
+    endsInMate: true,
   },
   {
     id: "defend",
@@ -184,6 +293,40 @@ export const DRILLS = [
       },
     ],
     outro: "Panic moves lose pieces; a calm scan of the five defences rarely does.",
+  },
+  {
+    id: "luft",
+    title: "Give your king air",
+    tactic: "Defense",
+    intro:
+      "Black's rook is about to land on e1 — checkmate, because your own pawns box your king in. You have one move to defuse the threat.",
+    position: pos({ g1: "wk", f2: "wp", g2: "wp", h2: "wp", e8: "br", g8: "bk", a7: "bp" }),
+    steps: [
+      {
+        task: "Stop the back-rank mate.",
+        accept: [
+          mv("h2", "h3"), mv("h2", "h4"),
+          mv("g2", "g3"),
+          mv("f2", "f3"), mv("f2", "f4"),
+          mv("g1", "f1"),
+        ],
+        reply: null,
+        explain:
+          "Now ...Re1 is just a check, not a checkmate — your king has an escape square (or defends e1 itself). This escape hatch is called 'luft'.",
+        hint: {
+          text: "Nudge a pawn in front of the king — h3 is the classic luft move.",
+          arrow: mv("h2", "h3"),
+        },
+        traps: [
+          {
+            to: rc("h1"),
+            text: "On h1 the king is even more boxed in — ...Re1 would still be checkmate. Make an escape square instead.",
+          },
+        ],
+      },
+    ],
+    outro:
+      "Whole games are lost to the back rank. Once your rooks drift away from it, spend one quiet move on luft.",
   },
   {
     id: "poisoned",

@@ -61,9 +61,11 @@ same move generator the engine uses.
 
 The **Learn** tab holds "select and play" tutorials: real positions where
 you must find and play the tactic yourself. Each drill walks you through
-a line step by step — knight fork, attacking a pinned piece, skewer,
-discovered attack, and back-rank mate on the offensive side; saving an
-attacked piece and refusing a poisoned pawn on the defensive side. Wrong
+a line step by step — knight fork, pawn fork, attacking a pinned piece,
+skewer, discovered attack, the queen's double attack, removing the
+defender, back-rank mate, and the smothered mate on the offensive side;
+saving an attacked piece, making luft against a back-rank threat, and
+refusing a poisoned pawn on the defensive side. Wrong
 tries get explained (tempting traps get *specific* explanations), the
 Hint button draws the answer as a green arrow, and scripted replies keep
 the lesson on rails. Drills live in `src/drills.js`, and
