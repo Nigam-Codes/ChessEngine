@@ -1,4 +1,5 @@
 import React from "react";
+import ArrowLayer from "./Arrows.jsx";
 
 export const GLYPHS = {
   wk: "♚", wq: "♛", wr: "♜", wb: "♝", wn: "♞", wp: "♟",
@@ -6,7 +7,7 @@ export const GLYPHS = {
 };
 
 /** A small, non-interactive board for lesson diagrams. */
-export default function MiniBoard({ position, highlights = [] }) {
+export default function MiniBoard({ position, highlights = [], arrows = [] }) {
   const marked = new Set(highlights.map(([r, c]) => `${r}-${c}`));
   return (
     <div className="mini-board" aria-hidden="true">
@@ -28,6 +29,7 @@ export default function MiniBoard({ position, highlights = [] }) {
           </div>
         ))
       )}
+      <ArrowLayer arrows={arrows} />
     </div>
   );
 }

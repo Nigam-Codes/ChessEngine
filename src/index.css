@@ -95,6 +95,7 @@ button {
 /* ---- Board ---- */
 
 .board {
+  position: relative; /* anchors the arrow overlay */
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   width: 100%;
@@ -461,6 +462,7 @@ button {
 }
 
 .mini-board {
+  position: relative; /* anchors the arrow overlay */
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   width: min(260px, 100%);
@@ -527,6 +529,76 @@ button {
   margin: 0.2rem 0 0;
   font-size: 0.9rem;
   color: var(--text-muted);
+}
+
+/* ---- Arrows ---- */
+
+.arrow-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.arrow-legend {
+  max-width: 560px;
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.lg { font-weight: 700; }
+.lg-red { color: #ff6b6b; }
+.lg-green { color: #3ecf74; }
+.lg-blue { color: #6ea8fe; }
+
+/* ---- Habit tracker ---- */
+
+.small { font-size: 0.8rem; }
+
+.habit-group h3 {
+  margin: 0.6rem 0 0.25rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.habit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.habit-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.22rem 0;
+  font-size: 0.86rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.habit-list li:last-child { border-bottom: none; }
+
+.habit-counts {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.habit-dim { opacity: 0.5; }
+
+.habit-advice {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-panel-2);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 0.85rem;
 }
 
 /* ---- Reduced motion ---- */

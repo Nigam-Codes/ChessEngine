@@ -40,14 +40,37 @@ tutor:
   plain language, and marks the squares in red.
 - **Hint button** — stuck? Ask the coach for a suggested move; it's
   highlighted on the board in green with its score.
-- **Chess school** — ten short lessons with diagrams covering the basics
-  behind the tactics: piece values, center control, development, hanging
-  pieces, forks, pins, skewers, discovered attacks, back-rank mates, and
-  counting attackers vs defenders.
+- **Tactic arrows** — threats, hints, and the engine's last move are
+  drawn as directional arrows on the board (red = threat against you,
+  green = resource for you, blue = explanation), so you see not just
+  *which* squares matter but *which way* the tactic points. The lesson
+  diagrams use the same arrows to show how each pattern works.
+- **Chess school** — eleven short lessons with annotated diagrams
+  covering the basics behind the tactics: piece values, center control,
+  development, hanging pieces, forks, pins, skewers, discovered attacks,
+  back-rank mates, counting attackers vs defenders, and the five ways to
+  defend a threat.
 
 The coaching logic lives in `src/coach.js` — small, readable functions
 (`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
 same move generator the engine uses.
+
+## Habit tracker
+
+The **Habit tracker** panel watches how you actually play and keeps
+score across games (stored in your browser's localStorage):
+
+- **Habits to break** — leaving pieces hanging, ignoring threats,
+  bringing the queen out early, shuffling the same piece in the opening,
+  and graded mistakes/blunders.
+- **Habits to build** — developing minor pieces early, answering
+  threats, and matching the engine's top move.
+
+Each row shows this game's count and your all-time total, and the panel
+highlights the habit that most needs work with concrete advice. Most
+habits are detected from the board alone; the graded ones need Teacher
+mode's analysis. Undone moves still count — the habit happened! The
+detection logic is in `src/habits.js`.
 
 ## How the engine works
 

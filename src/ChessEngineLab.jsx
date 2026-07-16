@@ -13,6 +13,16 @@ import {
 import { classifyMove, threatReport } from "./coach.js";
 import { LESSONS } from "./lessons.js";
 import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
+import ArrowLayer from "./Arrows.jsx";
+import {
+  HABITS,
+  analyzeMove,
+  gradingEvents,
+  loadHabitStats,
+  saveHabitStats,
+  clearHabitStats,
+  emptyStats,
+} from "./habits.js";
 
 const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthless"];
 
@@ -55,12 +65,40 @@ export default function ChessEngineLab() {
   // Snapshots taken just before each of your moves, so Undo can rewind a
   // full move pair (your move + the engine's reply) in one click.
   const [past, setPast] = useState([]);
+  // Habit tracker: lifetime stats (localStorage) and this game's counts.
+  const [habitStats, setHabitStats] = useState(loadHabitStats);
+  const [gameCounts, setGameCounts] = useState({});
 
   const workerRef = useRef(null);
   const depthRef = useRef(depth);
   depthRef.current = depth;
   const boardRef = useRef(board);
   boardRef.current = board;
+  // Your moves so far this game, for opening-habit detection.
+  const yourMovesRef = useRef([]);
+
+  const recordHabitEvents = useCallback((events) => {
+    if (!events || events.length === 0) return;
+    setGameCounts((g) => {
+      const next = { ...g };
+      for (const id of events) next[id] = (next[id] || 0) + 1;
+      return next;
+    });
+    setHabitStats((s) => {
+      const next = { ...s, counts: { ...s.counts } };
+      for (const id of events) next.counts[id] = (next.counts[id] || 0) + 1;
+      saveHabitStats(next);
+      return next;
+    });
+  }, []);
+
+  const recordGameEnd = useCallback(() => {
+    setHabitStats((s) => {
+      const next = { ...s, games: s.games + 1 };
+      saveHabitStats(next);
+      return next;
+    });
+  }, []);
 
   // Grading quality shouldn't drop with an easy opponent, nor stall the
   // reply at high depths: analyze at depth 3-4 regardless of the slider.
@@ -80,10 +118,16 @@ export default function ChessEngineLab() {
       const result = msg.reply;
       setThinking(false);
       setTelemetry(result);
-      if (msg.coach) setCoachReport(msg.coach);
+      if (msg.coach) {
+        setCoachReport(msg.coach);
+        if (msg.coach.playedScore != null && msg.coach.best) {
+          recordHabitEvents(gradingEvents(msg.coach.bestScore - msg.coach.playedScore));
+        }
+      }
       if (!result.move) return;
       const next = applyMove(boardRef.current, result.move);
       const newStatus = getGameStatus(next, WHITE);
+      if (newStatus === "checkmate" || newStatus === "stalemate") recordGameEnd();
       setBoard(next);
       setStatus(newStatus);
       setLastMove(result.move);
@@ -96,7 +140,7 @@ export default function ChessEngineLab() {
       ]);
     };
     return worker;
-  }, []);
+  }, [recordHabitEvents, recordGameEnd]);
 
   useEffect(() => {
     workerRef.current = makeWorker();
@@ -120,10 +164,25 @@ export default function ChessEngineLab() {
     if (move) {
       setPast((p) => [
         ...p,
-        { board, lastMove, telemetry, status, history, coachReport, threats },
+        {
+          board, lastMove, telemetry, status, history, coachReport, threats,
+          yourMoves: yourMovesRef.current,
+        },
       ]);
       const next = applyMove(board, move);
       const newStatus = getGameStatus(next, BLACK);
+      // Habit detection compares the position before and after your move.
+      // Undone moves stay counted — the habit still happened.
+      recordHabitEvents(
+        analyzeMove({
+          prevBoard: board,
+          nextBoard: next,
+          move,
+          moveNumber: yourMovesRef.current.length + 1,
+          previousMoves: yourMovesRef.current,
+        })
+      );
+      yourMovesRef.current = [...yourMovesRef.current, move];
       setBoard(next);
       setSelected(null);
       setLastMove(move);
@@ -136,7 +195,10 @@ export default function ChessEngineLab() {
         moveToString(move) +
           (newStatus === "checkmate" ? "#" : newStatus === "check" ? "+" : ""),
       ]);
-      if (newStatus === "checkmate" || newStatus === "stalemate") return;
+      if (newStatus === "checkmate" || newStatus === "stalemate") {
+        recordGameEnd();
+        return;
+      }
       setTurn(BLACK);
       setThinking(true);
       workerRef.current.postMessage({
@@ -193,6 +255,7 @@ export default function ChessEngineLab() {
     setTurn(WHITE);
     setSelected(null);
     setThinking(false);
+    yourMovesRef.current = prev.yourMoves;
   };
 
   const reset = () => {
@@ -212,6 +275,14 @@ export default function ChessEngineLab() {
     setHint(null);
     setHintLoading(false);
     setPast([]);
+    setGameCounts({});
+    yourMovesRef.current = [];
+  };
+
+  const resetHabits = () => {
+    clearHabitStats();
+    setHabitStats(emptyStats());
+    setGameCounts({});
   };
 
   // Static evaluation of the position on the board right now.
@@ -259,6 +330,40 @@ export default function ChessEngineLab() {
       `${hint.move.toR}-${hint.move.toC}`,
     ]);
   }, [teacherMode, hint]);
+
+  // Arrows drawn on the live board in teacher mode: red = threats aimed at
+  // you, green = the hint move, blue = the engine's last move.
+  const boardArrows = useMemo(() => {
+    if (!teacherMode) return [];
+    const arrows = [];
+    if (lastMove && lastMove.piece[0] === BLACK) {
+      arrows.push({
+        from: [lastMove.fromR, lastMove.fromC],
+        to: [lastMove.toR, lastMove.toC],
+        color: "blue",
+      });
+    }
+    if (threats && threats.arrows) arrows.push(...threats.arrows);
+    if (hint) {
+      arrows.push({
+        from: [hint.move.fromR, hint.move.fromC],
+        to: [hint.move.toR, hint.move.toC],
+        color: "green",
+      });
+    }
+    return arrows;
+  }, [teacherMode, lastMove, threats, hint]);
+
+  // Which bad habit needs the most work, for the "Focus" advice line.
+  const worstHabit = useMemo(() => {
+    let worst = null;
+    for (const h of HABITS) {
+      if (h.kind !== "avoid") continue;
+      const count = habitStats.counts[h.id] || 0;
+      if (count > 0 && (!worst || count > (habitStats.counts[worst.id] || 0))) worst = h;
+    }
+    return worst;
+  }, [habitStats]);
 
   const lesson = LESSONS[lessonIndex];
 
@@ -318,7 +423,16 @@ export default function ChessEngineLab() {
                 );
               })
             )}
+            <ArrowLayer arrows={boardArrows} />
           </div>
+
+          {teacherMode && boardArrows.length > 0 && (
+            <p className="arrow-legend">
+              Arrows: <span className="lg lg-red">red</span> = threat against you
+              {" · "}<span className="lg lg-green">green</span> = hint for you
+              {" · "}<span className="lg lg-blue">blue</span> = engine's last move
+            </p>
+          )}
 
           <div className="controls">
             <label className="strength">
@@ -405,6 +519,51 @@ export default function ChessEngineLab() {
               </div>
             </section>
           )}
+
+          <section className="panel" aria-label="Habit tracker">
+            <h2>Habit tracker</h2>
+            <p className="muted small">
+              Counted from your moves — this game / all time
+              {habitStats.games > 0 && ` · ${habitStats.games} game${habitStats.games === 1 ? "" : "s"} finished`}.
+            </p>
+            <div className="habit-group">
+              <h3>Habits to break</h3>
+              <ul className="habit-list">
+                {HABITS.filter((h) => h.kind === "avoid").map((h) => (
+                  <li key={h.id} className={h.teacherOnly && !teacherMode ? "habit-dim" : ""}>
+                    <span>{h.label}</span>
+                    <span className="habit-counts">
+                      {gameCounts[h.id] || 0} / {habitStats.counts[h.id] || 0}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <h3>Habits to build</h3>
+              <ul className="habit-list">
+                {HABITS.filter((h) => h.kind === "build").map((h) => (
+                  <li key={h.id} className={h.teacherOnly && !teacherMode ? "habit-dim" : ""}>
+                    <span>{h.label}</span>
+                    <span className="habit-counts">
+                      {gameCounts[h.id] || 0} / {habitStats.counts[h.id] || 0}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {worstHabit && (
+              <p className="habit-advice">
+                <strong>Focus:</strong> {worstHabit.advice}
+              </p>
+            )}
+            {!teacherMode && (
+              <p className="muted small">
+                Graded habits are only tracked while Teacher mode is on.
+              </p>
+            )}
+            <button className="reset" onClick={resetHabits}>
+              Reset stats
+            </button>
+          </section>
 
           <section className="panel" aria-label="Telemetry">
             <h2>Telemetry</h2>
@@ -493,7 +652,11 @@ export default function ChessEngineLab() {
             ))}
           </div>
           <div className="school-lesson">
-            <MiniBoard position={lesson.position} highlights={lesson.highlights} />
+            <MiniBoard
+              position={lesson.position}
+              highlights={lesson.highlights}
+              arrows={lesson.arrows}
+            />
             <div className="school-text">
               <h3>{lesson.title}</h3>
               <p>{lesson.body}</p>

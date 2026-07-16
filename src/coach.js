@@ -180,15 +180,20 @@ export function classifyMove(bestScore, playedScore) {
 const pieceLabel = (piece) => PIECE_NAMES[piece[1]];
 
 /**
- * Everything White should worry about right now, as readable warnings
- * plus the squares to highlight on the board.
+ * Everything White should worry about right now, as readable warnings,
+ * the squares to highlight on the board, and red attacker→target arrows
+ * that show each threat's direction.
  */
 export function threatReport(board) {
   const warnings = [];
   const squares = [];
+  const arrows = [];
 
   for (const h of hangingPieces(board, WHITE)) {
     squares.push({ r: h.r, c: h.c });
+    for (const a of attackers(board, h.r, h.c, BLACK)) {
+      arrows.push({ from: [a.r, a.c], to: [h.r, h.c], color: "red" });
+    }
     warnings.push(
       h.reason === "undefended"
         ? `Your ${pieceLabel(h.piece)} on ${squareName(h.r, h.c)} is attacked and nothing defends it.`
@@ -198,6 +203,9 @@ export function threatReport(board) {
 
   for (const f of findForks(board, BLACK)) {
     squares.push({ r: f.r, c: f.c });
+    for (const t of f.targets) {
+      arrows.push({ from: [f.r, f.c], to: [t.r, t.c], color: "red" });
+    }
     const targets = f.targets
       .map((t) => `${pieceLabel(t.piece)} on ${squareName(t.r, t.c)}`)
       .join(" and ");
@@ -206,12 +214,18 @@ export function threatReport(board) {
     );
   }
 
+  const king = findKing(board, WHITE);
   for (const p of findPins(board, WHITE)) {
     squares.push({ r: p.r, c: p.c });
+    if (king) {
+      // One arrow along the whole pin line: it passes through the pinned
+      // piece on its way to the king, which is exactly the point.
+      arrows.push({ from: [p.by.r, p.by.c], to: [king.r, king.c], color: "red" });
+    }
     warnings.push(
       `Your ${pieceLabel(p.piece)} on ${squareName(p.r, p.c)} is pinned to your king by the ${pieceLabel(p.by.piece)} on ${squareName(p.by.r, p.by.c)} — it can't move.`
     );
   }
 
-  return { warnings, squares };
+  return { warnings, squares, arrows };
 }
