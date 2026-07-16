@@ -2,7 +2,12 @@
 
 Pick a side and play a small, readable chess engine — and watch it think.
 Choose White or Black (the board flips and the engine opens when you take
-Black), or switch to **Learn mode** for hands-on tactic drills.
+Black), flip the board anytime, try blindfold mode, and get a post-game
+review with accuracy, move grades, and an evaluation graph. Switch to
+**Learn mode** for hands-on drills across tactics, openings, and endgames.
+At low strength levels the engine also makes human-like mistakes instead of
+just searching shallower. See `PLAN.md` for the full roadmap toward the
+AI-coach feature set.
 After every engine move a telemetry panel shows the position evaluation,
 how many positions were examined, how many branches alpha-beta pruning
 skipped, and the engine's top three candidate moves with their scores, so
@@ -40,8 +45,10 @@ tutor:
 - **Threat warnings** — after every engine reply, the coach scans the
   board for hanging pieces, forks, and pins against you, explains each in
   plain language, and marks the squares in red.
-- **Hint button** — stuck? Ask the coach for a suggested move; it's
-  highlighted on the board in green with its score.
+- **Hint ladder** — four levels of help: a general idea, then which piece,
+  then candidate moves, and only at level four the best move (drawn on the
+  board in green). The coach also asks Socratic questions ("What is your
+  opponent threatening?") instead of only telling.
 - **Tactic arrows** — threats, hints, and the engine's last move are
   drawn as directional arrows on the board (red = threat against you,
   green = resource for you, blue = explanation), so you see not just

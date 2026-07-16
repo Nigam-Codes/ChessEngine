@@ -620,6 +620,77 @@ button {
   margin-top: 0.6rem;
 }
 
+/* ---- Blindfold, hints, review ---- */
+
+.blindfold .piece { visibility: hidden; }
+
+.socratic {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-panel-2);
+  border-left: 3px solid var(--yellow, #f2c14e);
+  border-radius: 6px;
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.hint-ladder {
+  margin: 0.6rem 0 0;
+  padding-left: 1.2rem;
+  font-size: 0.88rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tag-opening { color: #6ea8fe; }
+.tag-endgame { color: #c792ea; }
+
+.panel-review { border-color: var(--accent); }
+
+.review-result { font-weight: 700; margin: 0.2rem 0 0.5rem; }
+
+.review-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+}
+
+.rc {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-panel-2);
+}
+
+.rc-good { color: #3ecf74; }
+.rc-warn { color: #f2c14e; }
+.rc-bad { color: #ff6b6b; }
+
+.eval-graph {
+  width: 100%;
+  height: 80px;
+  background: var(--bg-panel-2);
+  border-radius: 8px;
+  margin: 0.5rem 0;
+}
+
+.review-h3 {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0.6rem 0 0.25rem;
+}
+
+.review-critical {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.86rem;
+}
+
 /* ---- Arrows ---- */
 
 .arrow-layer {

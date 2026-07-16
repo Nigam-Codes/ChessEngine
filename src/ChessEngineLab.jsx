@@ -10,9 +10,10 @@ import {
   getGameStatus,
   moveToString,
   squareName,
+  inCheck,
 } from "./engine.js";
 import LearnMode from "./LearnMode.jsx";
-import { classifyMove, threatReport } from "./coach.js";
+import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
 import { LESSONS } from "./lessons.js";
 import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
 import ArrowLayer from "./Arrows.jsx";
@@ -27,6 +28,9 @@ import {
 } from "./habits.js";
 
 const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthless"];
+// Beginners don't just search shallower — they also pick imperfect moves.
+// Probability the engine plays a near-best candidate instead of the best.
+const FUZZ_BY_DEPTH = [0, 0.6, 0.3, 0, 0, 0, 0];
 
 function statusText(status, turn, thinking, playerColor) {
   if (status === "checkmate") {
@@ -64,9 +68,16 @@ export default function ChessEngineLab() {
   const [teacherMode, setTeacherMode] = useState(false);
   const [coachReport, setCoachReport] = useState(null); // grading of your last move
   const [threats, setThreats] = useState(null); // dangers after the engine's reply
-  const [hint, setHint] = useState(null); // suggested move for you
+  const [hint, setHint] = useState(null); // full analysis backing the hint ladder
+  const [hintLevel, setHintLevel] = useState(0); // 0 = hidden … 4 = best move
   const [hintLoading, setHintLoading] = useState(false);
   const [lessonIndex, setLessonIndex] = useState(0);
+  // Board display options.
+  const [flipped, setFlipped] = useState(false);
+  const [blindfold, setBlindfold] = useState(false);
+  // Game record for the post-game review.
+  const [evalHistory, setEvalHistory] = useState([]); // static eval after each ply
+  const [gradeLog, setGradeLog] = useState([]); // { moveStr, loss } per graded move
   // Snapshots taken just before each of your moves, so Undo can rewind a
   // full move pair (your move + the engine's reply) in one click.
   const [past, setPast] = useState([]);
@@ -121,7 +132,8 @@ export default function ChessEngineLab() {
       const msg = event.data;
       if (msg.type === "hint") {
         setHintLoading(false);
-        setHint(msg.result.move ? { move: msg.result.move, score: msg.result.score } : null);
+        setHint(msg.result.move ? msg.result : null);
+        setHintLevel(msg.result.move ? 1 : 0);
         return;
       }
       const result = msg.reply;
@@ -136,6 +148,7 @@ export default function ChessEngineLab() {
               ? msg.coach.bestScore - msg.coach.playedScore
               : msg.coach.playedScore - msg.coach.bestScore;
           recordHabitEvents(gradingEvents(loss));
+          setGradeLog((g) => [...g, { moveStr: moveToString(msg.coach.played), loss }]);
         }
       }
       if (!result.move) return;
@@ -147,6 +160,7 @@ export default function ChessEngineLab() {
       setLastMove(result.move);
       setTurn(pc);
       setThreats(threatReport(next, pc));
+      setEvalHistory((h) => [...h, evaluate(next)]);
       setHistory((h) => [
         ...h,
         moveToString(result.move) +
@@ -180,6 +194,7 @@ export default function ChessEngineLab() {
         ...p,
         {
           board, lastMove, telemetry, status, history, coachReport, threats,
+          evalHistory, gradeLog,
           yourMoves: yourMovesRef.current,
         },
       ]);
@@ -203,8 +218,10 @@ export default function ChessEngineLab() {
       setLastMove(move);
       setStatus(newStatus);
       setHint(null);
+      setHintLevel(0);
       setCoachReport(null);
       setThreats(null);
+      setEvalHistory((h) => [...h, evaluate(next)]);
       setHistory((h) => [
         ...h,
         moveToString(move) +
@@ -221,6 +238,7 @@ export default function ChessEngineLab() {
         board: next,
         color: engineColor,
         depth: depthRef.current,
+        fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
         // In teacher mode, also grade the move just played: analyze the
         // position it was played *in* (the pre-move board).
         coach: teacherMode
@@ -238,8 +256,15 @@ export default function ChessEngineLab() {
     }
   };
 
+  // The hint ladder: first press fetches the analysis and shows a general
+  // idea; each further press reveals more (piece → candidates → best move),
+  // so you can take just as much help as you need.
   const requestHint = () => {
     if (thinking || hintLoading || gameOver || turn !== playerColor) return;
+    if (hint) {
+      setHintLevel((l) => Math.min(4, l + 1));
+      return;
+    }
     setHintLoading(true);
     workerRef.current.postMessage({
       type: "hint",
@@ -248,6 +273,22 @@ export default function ChessEngineLab() {
       depth: coachDepth,
     });
   };
+
+  // Level-1 hint: a Socratic nudge derived from what the best move *does*,
+  // without revealing it.
+  const hintIdea = useMemo(() => {
+    if (!hint || !hint.move) return "";
+    const best = hint.move;
+    if (best.captured) return "There's a capture worth calculating — count attackers and defenders first.";
+    const after = applyMove(board, best);
+    if (inCheck(after, engineColor)) return "Look at forcing moves — checks first, always.";
+    if (threats && threats.warnings.length > 0) return "Something of yours is under fire — deal with the threat.";
+    const homeRow = playerColor === WHITE ? 7 : 0;
+    if (best.fromR === homeRow && (best.piece[1] === "n" || best.piece[1] === "b")) {
+      return "Your development isn't finished — bring a new piece into the game.";
+    }
+    return "No tactics here — find your worst-placed piece and give it a better square.";
+  }, [hint, board, threats, playerColor, engineColor]);
 
   const undo = () => {
     if (past.length === 0) return;
@@ -265,7 +306,10 @@ export default function ChessEngineLab() {
     setHistory(prev.history);
     setCoachReport(prev.coachReport);
     setThreats(prev.threats);
+    setEvalHistory(prev.evalHistory);
+    setGradeLog(prev.gradeLog);
     setHint(null);
+    setHintLevel(0);
     setHintLoading(false);
     setTurn(playerColor);
     setSelected(null);
@@ -293,9 +337,12 @@ export default function ChessEngineLab() {
     setCoachReport(null);
     setThreats(null);
     setHint(null);
+    setHintLevel(0);
     setHintLoading(false);
     setPast([]);
     setGameCounts({});
+    setEvalHistory([]);
+    setGradeLog([]);
     yourMovesRef.current = [];
     if (color === BLACK) {
       // You chose Black, so the engine opens the game as White.
@@ -305,6 +352,7 @@ export default function ChessEngineLab() {
         board: fresh,
         color: WHITE,
         depth: depthRef.current,
+        fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
         coach: null,
       });
     } else {
@@ -368,6 +416,9 @@ export default function ChessEngineLab() {
 
   // Arrows drawn on the live board in teacher mode: red = threats aimed at
   // you, green = the hint move, blue = the engine's last move.
+  // Board orientation: your side at the bottom, unless manually flipped.
+  const orientBlack = (playerColor === BLACK) !== flipped;
+
   const boardArrows = useMemo(() => {
     if (!teacherMode) return [];
     const arrows = [];
@@ -379,15 +430,16 @@ export default function ChessEngineLab() {
       });
     }
     if (threats && threats.arrows) arrows.push(...threats.arrows);
-    if (hint) {
+    // The hint arrow is the top of the ladder — only level 4 reveals it.
+    if (hint && hintLevel === 4) {
       arrows.push({
         from: [hint.move.fromR, hint.move.fromC],
         to: [hint.move.toR, hint.move.toC],
         color: "green",
       });
     }
-    // When the board is flipped for Black, arrow geometry flips with it.
-    if (playerColor === BLACK) {
+    // When the board is displayed flipped, arrow geometry flips with it.
+    if (orientBlack) {
       return arrows.map((a) => ({
         ...a,
         from: [7 - a.from[0], 7 - a.from[1]],
@@ -395,7 +447,45 @@ export default function ChessEngineLab() {
       }));
     }
     return arrows;
-  }, [teacherMode, lastMove, threats, hint, engineColor, playerColor]);
+  }, [teacherMode, lastMove, threats, hint, hintLevel, engineColor, orientBlack]);
+
+  // A Socratic prompt for the coach panel — a question, not an answer.
+  const socratic = useMemo(() => {
+    if (threats && threats.warnings.length > 0) {
+      return "What is your opponent threatening right now?";
+    }
+    if (lastMove) return "What changed after that last move — which squares opened up?";
+    return "Which of your pieces is least active, and can you improve it?";
+  }, [threats, lastMove]);
+
+  // Post-game review: verdict counts, accuracy, and the biggest swings.
+  const review = useMemo(() => {
+    if (!gameOver) return null;
+    const counts = { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
+    let totalLoss = 0;
+    for (const g of gradeLog) {
+      totalLoss += Math.max(0, g.loss);
+      if (g.loss <= 20) counts.best++;
+      else if (g.loss <= 60) counts.good++;
+      else if (g.loss <= 150) counts.inaccuracy++;
+      else if (g.loss <= 400) counts.mistake++;
+      else counts.blunder++;
+    }
+    const avgLoss = gradeLog.length ? totalLoss / gradeLog.length : null;
+    const accuracy =
+      avgLoss == null ? null : Math.max(0, Math.min(100, Math.round(100 - avgLoss / 6)));
+    // Critical moments: the largest eval swings between consecutive plies.
+    const swings = [];
+    for (let i = 1; i < evalHistory.length; i++) {
+      const delta = evalHistory[i] - evalHistory[i - 1];
+      swings.push({ ply: i, delta });
+    }
+    const critical = swings
+      .filter((s) => Math.abs(s.delta) >= 150)
+      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+      .slice(0, 3);
+    return { counts, accuracy, critical, graded: gradeLog.length };
+  }, [gameOver, gradeLog, evalHistory]);
 
   // Which bad habit needs the most work, for the "Focus" advice line.
   const worstHabit = useMemo(() => {
@@ -451,15 +541,15 @@ export default function ChessEngineLab() {
           </div>
 
           <div
-            className="board"
+            className={"board" + (blindfold ? " blindfold" : "")}
             role="grid"
             aria-label={`Board, you play ${playerColor === WHITE ? "White" : "Black"}`}
           >
             {Array.from({ length: 8 }, (_, dr) =>
               Array.from({ length: 8 }, (_, dc) => {
-                // Playing Black flips the board so your pieces start at the bottom.
-                const r = playerColor === WHITE ? dr : 7 - dr;
-                const c = playerColor === WHITE ? dc : 7 - dc;
+                // Display coordinates follow the orientation; game logic never flips.
+                const r = orientBlack ? 7 - dr : dr;
+                const c = orientBlack ? 7 - dc : dc;
                 const piece = board[r][c];
                 const dark = (r + c) % 2 === 1;
                 const isSelected = selected && selected.r === r && selected.c === c;
@@ -532,6 +622,9 @@ export default function ChessEngineLab() {
               Undo move
             </button>
             <button className="reset" onClick={reset}>New game</button>
+            <button className="reset" onClick={() => setFlipped((f) => !f)} title="Rotate the board 180°">
+              Flip board
+            </button>
             <div className="side-picker" role="group" aria-label="Choose your side (starts a new game)">
               <span className="muted small">You play</span>
               <button
@@ -559,10 +652,81 @@ export default function ChessEngineLab() {
               />
               <span>Teacher mode</span>
             </label>
+            <label className="teacher-toggle" title="Hide the pieces and play from the move list — the classic visualization exercise">
+              <input
+                type="checkbox"
+                checked={blindfold}
+                onChange={(e) => setBlindfold(e.target.checked)}
+              />
+              <span>Blindfold</span>
+            </label>
           </div>
         </section>
 
         <aside className="panel-column">
+          {review && (
+            <section className="panel panel-review" aria-label="Game review">
+              <h2>Game review</h2>
+              <p className="review-result">
+                {statusText(status, turn, false, playerColor)}
+              </p>
+              {review.accuracy != null ? (
+                <p>
+                  Your accuracy: <strong>{review.accuracy}%</strong>{" "}
+                  <span className="muted small">({review.graded} graded moves)</span>
+                </p>
+              ) : (
+                <p className="muted small">
+                  Play with Teacher mode on to get accuracy and move grades in the review.
+                </p>
+              )}
+              {review.graded > 0 && (
+                <p className="review-counts">
+                  <span className="rc rc-good">{review.counts.best} best</span>
+                  <span className="rc rc-good">{review.counts.good} good</span>
+                  <span className="rc rc-warn">{review.counts.inaccuracy} inaccuracies</span>
+                  <span className="rc rc-bad">{review.counts.mistake} mistakes</span>
+                  <span className="rc rc-bad">{review.counts.blunder} blunders</span>
+                </p>
+              )}
+              {evalHistory.length > 1 && (
+                <svg className="eval-graph" viewBox="0 0 300 80" preserveAspectRatio="none"
+                     aria-label="Evaluation over the game">
+                  <line x1="0" y1="40" x2="300" y2="40" stroke="#4a5266" strokeWidth="1" strokeDasharray="4 4" />
+                  <polyline
+                    fill="none"
+                    stroke="#6ea8fe"
+                    strokeWidth="2"
+                    points={evalHistory
+                      .map((cp, i) => {
+                        const x = (i / (evalHistory.length - 1)) * 300;
+                        const y = 40 - Math.max(-38, Math.min(38, cp / 13));
+                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                      })
+                      .join(" ")}
+                  />
+                </svg>
+              )}
+              {review.critical.length > 0 && (
+                <>
+                  <h3 className="review-h3">Critical moments</h3>
+                  <ul className="review-critical">
+                    {review.critical.map((s) => (
+                      <li key={s.ply}>
+                        Move {Math.floor(s.ply / 2) + 1}
+                        {s.ply % 2 === 0 ? "" : "…"} ({history[s.ply] || "—"}):{" "}
+                        {s.delta > 0 ? "+" : ""}{(s.delta / 100).toFixed(1)} swing
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <p className="muted small">
+                Undo steps back into the game; New game starts fresh.
+              </p>
+            </section>
+          )}
+
           {teacherMode && (
             <section className="panel panel-coach" aria-label="Coach">
               <h2>Coach</h2>
@@ -596,20 +760,38 @@ export default function ChessEngineLab() {
               {threats && threats.warnings.length === 0 && grading && (
                 <p className="muted">No immediate tactics against you. Keep developing.</p>
               )}
+              {!gameOver && turn === playerColor && !thinking && (
+                <p className="socratic">Coach asks: {socratic}</p>
+              )}
               <div className="hint-row">
                 <button
                   className="reset"
                   onClick={requestHint}
-                  disabled={thinking || hintLoading || gameOver || turn !== WHITE}
+                  disabled={thinking || hintLoading || gameOver || turn !== playerColor || hintLevel >= 4}
                 >
-                  {hintLoading ? "Analyzing…" : "Hint"}
+                  {hintLoading ? "Analyzing…" : hint ? `More help (${hintLevel}/4)` : "Hint"}
                 </button>
-                {hint && (
-                  <span className="hint-text">
-                    Try <strong>{moveToString(hint.move)}</strong> ({formatScore(hint.score)})
-                  </span>
-                )}
               </div>
+              {hint && hintLevel >= 1 && (
+                <ol className="hint-ladder">
+                  <li><strong>Idea:</strong> {hintIdea}</li>
+                  {hintLevel >= 2 && (
+                    <li><strong>Piece:</strong> look at your {PIECE_NAMES[hint.move.piece[1]]}.</li>
+                  )}
+                  {hintLevel >= 3 && (
+                    <li>
+                      <strong>Candidates:</strong>{" "}
+                      {hint.candidates.slice(0, 3).map((c) => moveToString(c.move)).join(", ")}
+                    </li>
+                  )}
+                  {hintLevel >= 4 && (
+                    <li>
+                      <strong>Best:</strong> {moveToString(hint.move)} ({formatScore(hint.score)})
+                      — drawn on the board.
+                    </li>
+                  )}
+                </ol>
+              )}
             </section>
           )}
 

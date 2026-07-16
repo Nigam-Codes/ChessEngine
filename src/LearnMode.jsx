@@ -10,7 +10,16 @@ import { DRILLS } from "./drills.js";
  * White here), a scripted opponent replies, and every step explains what
  * just happened. Wrong tries get feedback instead of a lost game.
  */
+const CATEGORIES = ["All", "Offense", "Defense", "Opening", "Endgame"];
+const TAG_CLASS = {
+  Offense: "tag-offense",
+  Defense: "tag-defense",
+  Opening: "tag-opening",
+  Endgame: "tag-endgame",
+};
+
 export default function LearnMode() {
+  const [category, setCategory] = useState("All");
   const [drillIndex, setDrillIndex] = useState(0);
   const drill = DRILLS[drillIndex];
   const [board, setBoard] = useState(() => cloneBoard(drill.position));
@@ -101,10 +110,32 @@ export default function LearnMode() {
       ? [{ ...step.hint.arrow, color: "green" }]
       : [];
 
+  const visible = DRILLS.map((d, i) => ({ drill: d, index: i })).filter(
+    ({ drill: d }) => category === "All" || d.tactic === category
+  );
+
+  const pickCategory = (cat) => {
+    setCategory(cat);
+    const first = DRILLS.findIndex((d) => cat === "All" || d.tactic === cat);
+    if (first !== -1 && (cat !== "All" && drill.tactic !== cat)) loadDrill(first);
+  };
+
   return (
     <section className="learn" aria-label="Learn mode">
+      <div className="drill-nav" role="group" aria-label="Drill categories">
+        {CATEGORIES.map((cat) => (
+          <button
+            key={cat}
+            className={"chip" + (cat === category ? " chip-active" : "")}
+            onClick={() => pickCategory(cat)}
+            aria-pressed={cat === category}
+          >
+            {cat}
+          </button>
+        ))}
+      </div>
       <div className="drill-nav" role="tablist" aria-label="Drills">
-        {DRILLS.map((d, i) => (
+        {visible.map(({ drill: d, index: i }, n) => (
           <button
             key={d.id}
             className={"chip" + (i === drillIndex ? " chip-active" : "")}
@@ -112,7 +143,7 @@ export default function LearnMode() {
             role="tab"
             aria-selected={i === drillIndex}
           >
-            {i + 1}. {d.title}
+            {n + 1}. {d.title}
           </button>
         ))}
       </div>
@@ -167,7 +198,7 @@ export default function LearnMode() {
           <section className="panel" aria-label="Drill instructions">
             <h2>
               {drill.title}{" "}
-              <span className={"drill-tag " + (drill.tactic === "Offense" ? "tag-offense" : "tag-defense")}>
+              <span className={"drill-tag " + (TAG_CLASS[drill.tactic] || "tag-offense")}>
                 {drill.tactic}
               </span>
             </h2>
@@ -207,8 +238,11 @@ export default function LearnMode() {
               </button>
               <button
                 className="reset"
-                onClick={() => loadDrill(drillIndex + 1)}
-                disabled={drillIndex >= DRILLS.length - 1}
+                onClick={() => {
+                  const at = visible.findIndex(({ index }) => index === drillIndex);
+                  if (at !== -1 && at < visible.length - 1) loadDrill(visible[at + 1].index);
+                }}
+                disabled={visible.findIndex(({ index }) => index === drillIndex) >= visible.length - 1}
               >
                 Next drill →
               </button>

@@ -12,6 +12,8 @@
  * with the engine's rules.
  */
 
+import { initialBoard } from "./engine.js";
+
 /** Build an 8×8 board from { e4: "wp", g8: "bk", ... }. */
 function pos(pieces) {
   const board = Array.from({ length: 8 }, () => Array(8).fill(""));
@@ -352,5 +354,199 @@ export const DRILLS = [
       },
     ],
     outro: "A capture is only safe when your attackers outnumber — and out-cheap — the defenders.",
+  },
+  {
+    id: "italian",
+    title: "Opening: the Italian Game",
+    tactic: "Opening",
+    intro:
+      "The oldest opening plan in the book: claim the center, develop a knight, then aim your bishop at Black's weakest square — f7, defended only by the king.",
+    position: initialBoard(),
+    steps: [
+      {
+        task: "Stake your claim in the center.",
+        accept: [mv("e2", "e4")],
+        reply: mv("e7", "e5"),
+        explain: "1. e4 opens lines for the queen and bishop and fights for d5. Black mirrors.",
+        hint: { text: "Push the king's pawn two squares.", arrow: mv("e2", "e4") },
+      },
+      {
+        task: "Develop with a threat.",
+        accept: [mv("g1", "f3")],
+        reply: mv("b8", "c6"),
+        explain:
+          "2. Nf3 develops toward the center *and* attacks e5 — development with tempo. Black defends.",
+        hint: { text: "Knights before bishops: the king's knight attacks e5.", arrow: mv("g1", "f3") },
+      },
+      {
+        task: "Point your bishop at Black's weakest square.",
+        accept: [mv("f1", "c4")],
+        reply: mv("f8", "c5"),
+        explain:
+          "3. Bc4 eyes f7, the one square only the king defends. That's the Italian Game: fast development, central control, early pressure.",
+        hint: { text: "The light-squared bishop belongs on c4.", arrow: mv("f1", "c4") },
+      },
+    ],
+    outro:
+      "Typical plans from here: castle short, play c3 and d4 for a big center, and watch for tactics on f7.",
+  },
+  {
+    id: "queensgambit",
+    title: "Opening: the Queen's Gambit",
+    tactic: "Opening",
+    intro:
+      "A 'gambit' that risks nothing: White offers the c-pawn to lure Black's central pawn away — and can always regain it.",
+    position: initialBoard(),
+    steps: [
+      {
+        task: "Take the center with the queen's pawn.",
+        accept: [mv("d2", "d4")],
+        reply: mv("d7", "d5"),
+        explain: "1. d4 controls e5 and c5 and is defended by the queen from the start.",
+        hint: { text: "Push the queen's pawn two squares.", arrow: mv("d2", "d4") },
+      },
+      {
+        task: "Offer the gambit pawn.",
+        accept: [mv("c2", "c4")],
+        reply: mv("d5", "c4"),
+        explain:
+          "2. c4 attacks d5. If Black captures — as here — the central d5 pawn leaves the center for a side pawn White can win back.",
+        hint: { text: "Attack d5 with your c-pawn.", arrow: mv("c2", "c4") },
+      },
+      {
+        task: "Open the path to regain the pawn.",
+        accept: [mv("e2", "e3")],
+        reply: mv("g8", "f6"),
+        explain:
+          "3. e3 frees the bishop: Bxc4 comes next and White has traded a side pawn for Black's central pawn — a positional win dressed up as a gambit.",
+        hint: { text: "A small pawn move opens the f1 bishop's diagonal to c4.", arrow: mv("e2", "e3") },
+      },
+    ],
+    outro:
+      "The lesson generalizes: center pawns are worth more than side pawns, and 'free' pawns often cost the center.",
+  },
+  {
+    id: "keysquares",
+    title: "Endgame: escort the pawn home",
+    tactic: "Endgame",
+    intro:
+      "King and pawn against king — the ending every game can become. With your king *in front* of the pawn, the win is a forced march.",
+    position: pos({ d6: "wk", e6: "wp", e8: "bk" }),
+    steps: [
+      {
+        task: "Advance the pawn — the king can't stop it.",
+        accept: [mv("e6", "e7")],
+        reply: mv("e8", "f7"),
+        explain:
+          "The pawn takes e7 while your king guards it. Black's king must step aside — it can't reach d8 or f8 (your pawn covers both).",
+        hint: { text: "Push the pawn; your king protects e7.", arrow: mv("e6", "e7") },
+      },
+      {
+        task: "Shoulder the enemy king away from the queening square.",
+        accept: [mv("d6", "d7")],
+        reply: mv("f7", "f6"),
+        explain:
+          "Kd7 seizes e8 by force. Black can never touch the pawn again — promotion is unstoppable.",
+        hint: { text: "Your king takes control of e8.", arrow: mv("d6", "d7") },
+      },
+      {
+        task: "Promote!",
+        accept: [mv("e7", "e8")],
+        reply: null,
+        explain: "A new queen. King in front of the pawn + opposition = win, every time.",
+        hint: { text: "March the pawn to the last rank.", arrow: mv("e7", "e8") },
+      },
+    ],
+    outro:
+      "Rule to remember: in king-and-pawn endings, the king leads and the pawn follows — not the other way around.",
+  },
+  {
+    id: "square",
+    title: "Endgame: the square rule",
+    tactic: "Endgame",
+    intro:
+      "Can the defending king catch a runner? Draw a square from the pawn to the promotion rank — if the king can't step inside it, the pawn wins the race. Here Black's king stands one square outside.",
+    position: pos({ a4: "wp", h1: "wk", f6: "bk" }),
+    steps: [
+      {
+        task: "Start the race.",
+        accept: [mv("a4", "a5")],
+        reply: mv("f6", "e6"),
+        explain: "The square is now a5–e5–e8–a8. Black's king on e6 is inside… by exactly one step too few.",
+        hint: { text: "Run! Push the a-pawn.", arrow: mv("a4", "a5") },
+      },
+      {
+        task: "Keep running — don't hesitate.",
+        accept: [mv("a5", "a6")],
+        reply: mv("e6", "d6"),
+        explain: "Every push shrinks the square. The king chases but never gains a tempo.",
+        hint: { text: "Push again.", arrow: mv("a5", "a6") },
+      },
+      {
+        task: "One more push.",
+        accept: [mv("a6", "a7")],
+        reply: mv("d6", "c7"),
+        explain: "The king arrives at c7 one move too late — a8 is out of reach.",
+        hint: { text: "Push.", arrow: mv("a6", "a7") },
+      },
+      {
+        task: "Promote.",
+        accept: [mv("a7", "a8")],
+        reply: null,
+        explain: "Queen! Count the square *before* you commit to a pawn race — it decides the game in one glance.",
+        hint: { text: "a8 makes a queen.", arrow: mv("a7", "a8") },
+      },
+    ],
+    outro:
+      "The square rule works both ways — use it to know when your pawn queens, and when your king must run back.",
+  },
+  {
+    id: "philidor",
+    title: "Endgame: the Philidor draw",
+    tactic: "Endgame",
+    intro:
+      "Rook endgame, a pawn down — but drawable with the famous Philidor method. The pawn has just advanced to e3, so the passive defense is over: your rook belongs *behind* the enemy king now.",
+    position: pos({ e1: "wk", a3: "wr", e5: "bk", e3: "bp", h7: "br" }),
+    steps: [
+      {
+        task: "Send your rook to the far rank, behind the enemy king.",
+        accept: [mv("a3", "a8")],
+        reply: mv("e5", "e4"),
+        explain:
+          "Once the pawn advanced, the king lost its shelter square — from a8 your rook checks forever.",
+        hint: { text: "The eighth rank is the rook's home now.", arrow: mv("a3", "a8") },
+      },
+      {
+        task: "Start checking from behind.",
+        accept: [mv("a8", "e8")],
+        reply: mv("e4", "d3"),
+        explain:
+          "Check! The king has nowhere to hide from rear checks — step forward and it abandons the pawn, step back and nothing has changed. That's the Philidor draw.",
+        hint: { text: "Check along the e-file, from behind.", arrow: mv("a8", "e8") },
+      },
+    ],
+    outro:
+      "The full method: keep your rook on your third rank while the pawn waits, and the instant it advances, switch to endless checks from behind.",
+  },
+  {
+    id: "rookroller",
+    title: "Endgame: the rook mate",
+    tactic: "Endgame",
+    intro:
+      "King and rook against king — the mate every player must be able to force. The kings stand shoulder to shoulder; the rook delivers the final blow on the edge.",
+    position: pos({ a8: "bk", b6: "wk", h7: "wr" }),
+    steps: [
+      {
+        task: "Deliver checkmate in one move.",
+        accept: [mv("h7", "h8")],
+        reply: null,
+        explain:
+          "Checkmate! Your king takes away a7 and b7; the rook seals the back rank. King boxes, rook strikes.",
+        hint: { text: "The rook slides to the eighth rank.", arrow: mv("h7", "h8") },
+      },
+    ],
+    outro:
+      "The method in full: use the rook to fence the king onto the edge, walk your own king up for the shoulder block, then mate.",
+    endsInMate: true,
   },
 ];

@@ -38,6 +38,19 @@ self.onmessage = (event) => {
     };
   }
 
-  const reply = bestMove(msg.board, msg.color, msg.depth);
+  let reply = bestMove(msg.board, msg.color, msg.depth);
+
+  // Human-like fallibility: at low strength settings, sometimes play a
+  // near-best candidate instead of the top choice (msg.fuzz = probability).
+  // Real beginners don't just search shallower — they pick plausible-but-
+  // imperfect moves, and this simulates that.
+  if (msg.fuzz && reply.candidates.length > 1 && Math.random() < msg.fuzz) {
+    const best = reply.candidates[0].score;
+    const near = reply.candidates.filter((c) => Math.abs(c.score - best) <= 150);
+    const pool = near.length > 1 ? near : reply.candidates.slice(0, 2);
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    reply = { ...reply, move: pick.move, score: pick.score };
+  }
+
   self.postMessage({ type: "move", reply, coach });
 };
