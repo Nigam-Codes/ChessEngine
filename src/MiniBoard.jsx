@@ -1,9 +1,11 @@
 import React from "react";
 import ArrowLayer from "./Arrows.jsx";
 
+// Every glyph carries U+FE0E (text presentation selector): without it, iOS
+// renders ♟ as a colored emoji that ignores CSS, so white pawns show black.
 export const GLYPHS = {
-  wk: "♚", wq: "♛", wr: "♜", wb: "♝", wn: "♞", wp: "♟",
-  bk: "♚", bq: "♛", br: "♜", bb: "♝", bn: "♞", bp: "♟",
+  wk: "♚︎", wq: "♛︎", wr: "♜︎", wb: "♝︎", wn: "♞︎", wp: "♟︎",
+  bk: "♚︎", bq: "♛︎", br: "♜︎", bb: "♝︎", bn: "♞︎", bp: "♟︎",
 };
 
 /** A small, non-interactive board for lesson diagrams. */

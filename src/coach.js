@@ -168,8 +168,9 @@ export function findPins(board, color) {
  * the engine's best move in the same position (both scored exactly, by
  * the same search).
  */
-export function classifyMove(bestScore, playedScore) {
-  const loss = bestScore - playedScore;
+export function classifyMove(bestScore, playedScore, color = WHITE) {
+  // Scores are from White's perspective, so a Black player's loss is inverted.
+  const loss = color === WHITE ? bestScore - playedScore : playedScore - bestScore;
   if (loss <= 20) return { verdict: "Excellent", tone: "good", loss };
   if (loss <= 60) return { verdict: "Good move", tone: "good", loss };
   if (loss <= 150) return { verdict: "Inaccuracy", tone: "warn", loss };
@@ -180,18 +181,19 @@ export function classifyMove(bestScore, playedScore) {
 const pieceLabel = (piece) => PIECE_NAMES[piece[1]];
 
 /**
- * Everything White should worry about right now, as readable warnings,
- * the squares to highlight on the board, and red attacker→target arrows
- * that show each threat's direction.
+ * Everything the player (`color`, default White) should worry about right
+ * now, as readable warnings, the squares to highlight on the board, and
+ * red attacker→target arrows that show each threat's direction.
  */
-export function threatReport(board) {
+export function threatReport(board, color = WHITE) {
+  const enemy = opposite(color);
   const warnings = [];
   const squares = [];
   const arrows = [];
 
-  for (const h of hangingPieces(board, WHITE)) {
+  for (const h of hangingPieces(board, color)) {
     squares.push({ r: h.r, c: h.c });
-    for (const a of attackers(board, h.r, h.c, BLACK)) {
+    for (const a of attackers(board, h.r, h.c, enemy)) {
       arrows.push({ from: [a.r, a.c], to: [h.r, h.c], color: "red" });
     }
     warnings.push(
@@ -201,7 +203,7 @@ export function threatReport(board) {
     );
   }
 
-  for (const f of findForks(board, BLACK)) {
+  for (const f of findForks(board, enemy)) {
     squares.push({ r: f.r, c: f.c });
     for (const t of f.targets) {
       arrows.push({ from: [f.r, f.c], to: [t.r, t.c], color: "red" });
@@ -214,8 +216,8 @@ export function threatReport(board) {
     );
   }
 
-  const king = findKing(board, WHITE);
-  for (const p of findPins(board, WHITE)) {
+  const king = findKing(board, color);
+  for (const p of findPins(board, color)) {
     squares.push({ r: p.r, c: p.c });
     if (king) {
       // One arrow along the whole pin line: it passes through the pinned

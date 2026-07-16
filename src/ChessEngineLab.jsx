@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useEffect, useRef, useState } from "react"
 import {
   WHITE,
   BLACK,
+  opposite,
   initialBoard,
   legalMoves,
   applyMove,
@@ -10,6 +11,7 @@ import {
   moveToString,
   squareName,
 } from "./engine.js";
+import LearnMode from "./LearnMode.jsx";
 import { classifyMove, threatReport } from "./coach.js";
 import { LESSONS } from "./lessons.js";
 import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
@@ -26,9 +28,10 @@ import {
 
 const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthless"];
 
-function statusText(status, turn, thinking) {
+function statusText(status, turn, thinking, playerColor) {
   if (status === "checkmate") {
-    return turn === BLACK ? "Checkmate — you win!" : "Checkmate — the engine wins.";
+    // `turn` is the side that has no moves left.
+    return turn !== playerColor ? "Checkmate — you win!" : "Checkmate — the engine wins.";
   }
   if (status === "stalemate") return "Stalemate — draw.";
   if (thinking) return "Engine is thinking…";
@@ -46,6 +49,8 @@ function formatScore(cp) {
 }
 
 export default function ChessEngineLab() {
+  const [mode, setMode] = useState("play"); // "play" | "learn"
+  const [playerColor, setPlayerColor] = useState(WHITE);
   const [board, setBoard] = useState(initialBoard);
   const [turn, setTurn] = useState(WHITE);
   const [selected, setSelected] = useState(null); // { r, c } or null
@@ -74,8 +79,12 @@ export default function ChessEngineLab() {
   depthRef.current = depth;
   const boardRef = useRef(board);
   boardRef.current = board;
+  const playerColorRef = useRef(playerColor);
+  playerColorRef.current = playerColor;
   // Your moves so far this game, for opening-habit detection.
   const yourMovesRef = useRef([]);
+
+  const engineColor = opposite(playerColor);
 
   const recordHabitEvents = useCallback((events) => {
     if (!events || events.length === 0) return;
@@ -116,23 +125,28 @@ export default function ChessEngineLab() {
         return;
       }
       const result = msg.reply;
+      const pc = playerColorRef.current;
       setThinking(false);
       setTelemetry(result);
       if (msg.coach) {
         setCoachReport(msg.coach);
         if (msg.coach.playedScore != null && msg.coach.best) {
-          recordHabitEvents(gradingEvents(msg.coach.bestScore - msg.coach.playedScore));
+          const loss =
+            pc === WHITE
+              ? msg.coach.bestScore - msg.coach.playedScore
+              : msg.coach.playedScore - msg.coach.bestScore;
+          recordHabitEvents(gradingEvents(loss));
         }
       }
       if (!result.move) return;
       const next = applyMove(boardRef.current, result.move);
-      const newStatus = getGameStatus(next, WHITE);
+      const newStatus = getGameStatus(next, pc);
       if (newStatus === "checkmate" || newStatus === "stalemate") recordGameEnd();
       setBoard(next);
       setStatus(newStatus);
       setLastMove(result.move);
-      setTurn(WHITE);
-      setThreats(threatReport(next));
+      setTurn(pc);
+      setThreats(threatReport(next, pc));
       setHistory((h) => [
         ...h,
         moveToString(result.move) +
@@ -150,15 +164,15 @@ export default function ChessEngineLab() {
   // Legal moves for the currently selected piece.
   const targets = useMemo(() => {
     if (!selected) return [];
-    return legalMoves(board, WHITE).filter(
+    return legalMoves(board, playerColor).filter(
       (m) => m.fromR === selected.r && m.fromC === selected.c
     );
-  }, [board, selected]);
+  }, [board, selected, playerColor]);
 
   const gameOver = status === "checkmate" || status === "stalemate";
 
   const handleSquareClick = (r, c) => {
-    if (thinking || gameOver || turn !== WHITE) return;
+    if (thinking || gameOver || turn !== playerColor) return;
 
     const move = targets.find((m) => m.toR === r && m.toC === c);
     if (move) {
@@ -170,7 +184,7 @@ export default function ChessEngineLab() {
         },
       ]);
       const next = applyMove(board, move);
-      const newStatus = getGameStatus(next, BLACK);
+      const newStatus = getGameStatus(next, engineColor);
       // Habit detection compares the position before and after your move.
       // Undone moves stay counted — the habit still happened.
       recordHabitEvents(
@@ -180,6 +194,7 @@ export default function ChessEngineLab() {
           move,
           moveNumber: yourMovesRef.current.length + 1,
           previousMoves: yourMovesRef.current,
+          color: playerColor,
         })
       );
       yourMovesRef.current = [...yourMovesRef.current, move];
@@ -199,24 +214,24 @@ export default function ChessEngineLab() {
         recordGameEnd();
         return;
       }
-      setTurn(BLACK);
+      setTurn(engineColor);
       setThinking(true);
       workerRef.current.postMessage({
         type: "move",
         board: next,
-        color: BLACK,
+        color: engineColor,
         depth: depthRef.current,
         // In teacher mode, also grade the move just played: analyze the
         // position it was played *in* (the pre-move board).
         coach: teacherMode
-          ? { board, color: WHITE, depth: coachDepth, played: move }
+          ? { board, color: playerColor, depth: coachDepth, played: move }
           : null,
       });
       return;
     }
 
     const piece = board[r][c];
-    if (piece && piece[0] === WHITE) {
+    if (piece && piece[0] === playerColor) {
       setSelected(selected && selected.r === r && selected.c === c ? null : { r, c });
     } else {
       setSelected(null);
@@ -224,12 +239,12 @@ export default function ChessEngineLab() {
   };
 
   const requestHint = () => {
-    if (thinking || hintLoading || gameOver || turn !== WHITE) return;
+    if (thinking || hintLoading || gameOver || turn !== playerColor) return;
     setHintLoading(true);
     workerRef.current.postMessage({
       type: "hint",
       board,
-      color: WHITE,
+      color: playerColor,
       depth: coachDepth,
     });
   };
@@ -252,22 +267,27 @@ export default function ChessEngineLab() {
     setThreats(prev.threats);
     setHint(null);
     setHintLoading(false);
-    setTurn(WHITE);
+    setTurn(playerColor);
     setSelected(null);
     setThinking(false);
     yourMovesRef.current = prev.yourMoves;
   };
 
-  const reset = () => {
+  /** Start a fresh game with you playing `color`. */
+  const newGame = (color) => {
     // A search may be mid-flight; kill the worker so its result never lands.
     workerRef.current?.terminate();
-    workerRef.current = makeWorker();
-    setBoard(initialBoard());
-    setTurn(WHITE);
+    const worker = makeWorker();
+    workerRef.current = worker;
+    const fresh = initialBoard();
+    setPlayerColor(color);
+    playerColorRef.current = color;
+    setBoard(fresh);
+    boardRef.current = fresh;
+    setTurn(WHITE); // chess always starts with White to move
     setSelected(null);
     setLastMove(null);
     setHistory([]);
-    setThinking(false);
     setStatus("playing");
     setTelemetry(null);
     setCoachReport(null);
@@ -277,7 +297,22 @@ export default function ChessEngineLab() {
     setPast([]);
     setGameCounts({});
     yourMovesRef.current = [];
+    if (color === BLACK) {
+      // You chose Black, so the engine opens the game as White.
+      setThinking(true);
+      worker.postMessage({
+        type: "move",
+        board: fresh,
+        color: WHITE,
+        depth: depthRef.current,
+        coach: null,
+      });
+    } else {
+      setThinking(false);
+    }
   };
+
+  const reset = () => newGame(playerColor);
 
   const resetHabits = () => {
     clearHabitStats();
@@ -307,7 +342,7 @@ export default function ChessEngineLab() {
       played.toR === best.toR && played.toC === best.toC;
     const graded = isBest
       ? { verdict: "Best move!", tone: "good" }
-      : classifyMove(bestScore, playedScore);
+      : classifyMove(bestScore, playedScore, playerColor);
     return {
       ...graded,
       isBest,
@@ -316,7 +351,7 @@ export default function ChessEngineLab() {
       playedScore,
       bestScore,
     };
-  }, [coachReport]);
+  }, [coachReport, playerColor]);
 
   const threatSquares = useMemo(() => {
     if (!teacherMode || !threats) return new Set();
@@ -336,7 +371,7 @@ export default function ChessEngineLab() {
   const boardArrows = useMemo(() => {
     if (!teacherMode) return [];
     const arrows = [];
-    if (lastMove && lastMove.piece[0] === BLACK) {
+    if (lastMove && lastMove.piece[0] === engineColor) {
       arrows.push({
         from: [lastMove.fromR, lastMove.fromC],
         to: [lastMove.toR, lastMove.toC],
@@ -351,8 +386,16 @@ export default function ChessEngineLab() {
         color: "green",
       });
     }
+    // When the board is flipped for Black, arrow geometry flips with it.
+    if (playerColor === BLACK) {
+      return arrows.map((a) => ({
+        ...a,
+        from: [7 - a.from[0], 7 - a.from[1]],
+        to: [7 - a.to[0], 7 - a.to[1]],
+      }));
+    }
     return arrows;
-  }, [teacherMode, lastMove, threats, hint]);
+  }, [teacherMode, lastMove, threats, hint, engineColor, playerColor]);
 
   // Which bad habit needs the most work, for the "Focus" advice line.
   const worstHabit = useMemo(() => {
@@ -372,21 +415,52 @@ export default function ChessEngineLab() {
       <header className="lab-header">
         <h1>Chess Engine Lab</h1>
         <p className="tagline">
-          Play White against a minimax engine — and watch it think.
+          Pick a side, play a minimax engine — and watch it think.
         </p>
       </header>
 
+      <div className="mode-tabs" role="tablist" aria-label="Mode">
+        <button
+          className={"mode-tab" + (mode === "play" ? " active" : "")}
+          role="tab"
+          aria-selected={mode === "play"}
+          onClick={() => setMode("play")}
+        >
+          ♟ Play
+        </button>
+        <button
+          className={"mode-tab" + (mode === "learn" ? " active" : "")}
+          role="tab"
+          aria-selected={mode === "learn"}
+          onClick={() => setMode("learn")}
+        >
+          🎓 Learn
+        </button>
+      </div>
+
+      {mode === "learn" && <LearnMode />}
+
+      {mode === "play" && (
+      <>
       <main className="layout">
         <section className="board-column" aria-label="Chess board">
           <div className={"status" + (status === "check" ? " status-check" : "")}
                role="status" aria-live="polite">
-            {statusText(status, turn, thinking)}
+            {statusText(status, turn, thinking, playerColor)}
             {thinking && <span className="spinner" aria-hidden="true" />}
           </div>
 
-          <div className="board" role="grid" aria-label="Board, you play White">
-            {board.map((row, r) =>
-              row.map((piece, c) => {
+          <div
+            className="board"
+            role="grid"
+            aria-label={`Board, you play ${playerColor === WHITE ? "White" : "Black"}`}
+          >
+            {Array.from({ length: 8 }, (_, dr) =>
+              Array.from({ length: 8 }, (_, dc) => {
+                // Playing Black flips the board so your pieces start at the bottom.
+                const r = playerColor === WHITE ? dr : 7 - dr;
+                const c = playerColor === WHITE ? dc : 7 - dc;
+                const piece = board[r][c];
                 const dark = (r + c) % 2 === 1;
                 const isSelected = selected && selected.r === r && selected.c === c;
                 const isTarget = targets.some((m) => m.toR === r && m.toC === c);
@@ -417,8 +491,8 @@ export default function ChessEngineLab() {
                       </span>
                     )}
                     {isTarget && <span className={"dot" + (piece ? " dot-capture" : "")} aria-hidden="true" />}
-                    {c === 0 && <span className="coord coord-rank" aria-hidden="true">{8 - r}</span>}
-                    {r === 7 && <span className="coord coord-file" aria-hidden="true">{"abcdefgh"[c]}</span>}
+                    {dc === 0 && <span className="coord coord-rank" aria-hidden="true">{8 - r}</span>}
+                    {dr === 7 && <span className="coord coord-file" aria-hidden="true">{"abcdefgh"[c]}</span>}
                   </button>
                 );
               })
@@ -458,6 +532,25 @@ export default function ChessEngineLab() {
               Undo move
             </button>
             <button className="reset" onClick={reset}>New game</button>
+            <div className="side-picker" role="group" aria-label="Choose your side (starts a new game)">
+              <span className="muted small">You play</span>
+              <button
+                className={"chip" + (playerColor === WHITE ? " chip-active" : "")}
+                onClick={() => playerColor !== WHITE && newGame(WHITE)}
+                aria-pressed={playerColor === WHITE}
+                title="Play White (starts a new game)"
+              >
+                ♔ White
+              </button>
+              <button
+                className={"chip" + (playerColor === BLACK ? " chip-active" : "")}
+                onClick={() => playerColor !== BLACK && newGame(BLACK)}
+                aria-pressed={playerColor === BLACK}
+                title="Play Black (starts a new game)"
+              >
+                ♚ Black
+              </button>
+            </div>
             <label className="teacher-toggle">
               <input
                 type="checkbox"
@@ -617,7 +710,11 @@ export default function ChessEngineLab() {
           <section className="panel" aria-label="Move list">
             <h2>Moves</h2>
             {moveRows.length === 0 ? (
-              <p className="muted">No moves yet — you're White, go ahead.</p>
+              <p className="muted">
+                {playerColor === WHITE
+                  ? "No moves yet — you're White, go ahead."
+                  : "No moves yet — the engine opens as White."}
+              </p>
             ) : (
               <table className="move-list">
                 <tbody>
@@ -682,6 +779,8 @@ export default function ChessEngineLab() {
             </div>
           </div>
         </section>
+      )}
+      </>
       )}
 
       <footer className="lab-footer">

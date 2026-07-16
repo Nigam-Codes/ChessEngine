@@ -72,27 +72,27 @@ export const HABITS = [
   },
 ];
 
-/** White's minor pieces still on their starting squares. */
-const HOME_MINORS = [
-  [7, 1, "wn"], [7, 6, "wn"],
-  [7, 2, "wb"], [7, 5, "wb"],
-];
-
-function minorsAtHome(board) {
-  return HOME_MINORS.filter(([r, c, piece]) => board[r][c] === piece).length;
+/** How many of `color`'s minor pieces still sit on their starting squares. */
+function minorsAtHome(board, color) {
+  const home = color === WHITE ? 7 : 0;
+  return [
+    [home, 1, color + "n"], [home, 6, color + "n"],
+    [home, 2, color + "b"], [home, 5, color + "b"],
+  ].filter(([r, c, piece]) => board[r][c] === piece).length;
 }
 
 /**
  * Detect habit events for one of your moves. `moveNumber` counts *your*
  * moves (1 = your first move); `previousMoves` is the list of your earlier
- * move objects, used to spot the same piece being shuffled around.
- * Returns an array of habit ids (possibly empty).
+ * move objects, used to spot the same piece being shuffled around; `color`
+ * is the side you play. Returns an array of habit ids (possibly empty).
  */
-export function analyzeMove({ prevBoard, nextBoard, move, moveNumber, previousMoves = [] }) {
+export function analyzeMove({ prevBoard, nextBoard, move, moveNumber, previousMoves = [], color = WHITE }) {
   const events = [];
+  const homeRow = color === WHITE ? 7 : 0;
   const key = (h) => `${h.r}-${h.c}-${h.piece}`;
-  const before = hangingPieces(prevBoard, WHITE);
-  const after = hangingPieces(nextBoard, WHITE);
+  const before = hangingPieces(prevBoard, color);
+  const after = hangingPieces(nextBoard, color);
   const beforeKeys = new Set(before.map(key));
   const afterKeys = new Set(after.map(key));
 
@@ -108,7 +108,7 @@ export function analyzeMove({ prevBoard, nextBoard, move, moveNumber, previousMo
     }
   }
 
-  if (move.piece === "wq" && moveNumber <= 5 && minorsAtHome(prevBoard) >= 2) {
+  if (move.piece === color + "q" && moveNumber <= 5 && minorsAtHome(prevBoard, color) >= 2) {
     events.push("early-queen");
   }
 
@@ -117,7 +117,7 @@ export function analyzeMove({ prevBoard, nextBoard, move, moveNumber, previousMo
     move.piece[1] !== "p" &&
     move.piece[1] !== "k" &&
     !move.captured &&
-    minorsAtHome(prevBoard) >= 1 &&
+    minorsAtHome(prevBoard, color) >= 1 &&
     previousMoves.some(
       (m) => m.piece === move.piece && m.toR === move.fromR && m.toC === move.fromC
     )
@@ -125,7 +125,11 @@ export function analyzeMove({ prevBoard, nextBoard, move, moveNumber, previousMo
     events.push("piece-shuffle");
   }
 
-  if ((move.piece === "wn" || move.piece === "wb") && move.fromR === 7 && moveNumber <= 10) {
+  if (
+    (move.piece === color + "n" || move.piece === color + "b") &&
+    move.fromR === homeRow &&
+    moveNumber <= 10
+  ) {
     events.push("developed-minor");
   }
 

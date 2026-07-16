@@ -1,6 +1,8 @@
 # Chess Engine Lab
 
-Play White against a small, readable chess engine — and watch it think.
+Pick a side and play a small, readable chess engine — and watch it think.
+Choose White or Black (the board flips and the engine opens when you take
+Black), or switch to **Learn mode** for hands-on tactic drills.
 After every engine move a telemetry panel shows the position evaluation,
 how many positions were examined, how many branches alpha-beta pruning
 skipped, and the engine's top three candidate moves with their scores, so
@@ -54,6 +56,19 @@ tutor:
 The coaching logic lives in `src/coach.js` — small, readable functions
 (`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
 same move generator the engine uses.
+
+## Learn mode
+
+The **Learn** tab holds "select and play" tutorials: real positions where
+you must find and play the tactic yourself. Each drill walks you through
+a line step by step — knight fork, attacking a pinned piece, skewer,
+discovered attack, and back-rank mate on the offensive side; saving an
+attacked piece and refusing a poisoned pawn on the defensive side. Wrong
+tries get explained (tempting traps get *specific* explanations), the
+Hint button draws the answer as a green arrow, and scripted replies keep
+the lesson on rails. Drills live in `src/drills.js`, and
+`tests/drills.test.js` replays every one against the engine so the
+scripted moves can never drift out of legality.
 
 ## Habit tracker
 
