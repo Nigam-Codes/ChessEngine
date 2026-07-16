@@ -75,6 +75,15 @@ export default function ChessEngineLab() {
   // Board display options.
   const [flipped, setFlipped] = useState(false);
   const [blindfold, setBlindfold] = useState(false);
+  // User-drawn annotations (chess.com style): right-click-drag an arrow,
+  // right-click a square to highlight it, left-click to clear everything.
+  // The ✏️ Draw toggle lets touch screens draw with a plain drag.
+  const [userArrows, setUserArrows] = useState([]); // board coords
+  const [userHighlights, setUserHighlights] = useState([]); // "r-c" keys
+  const [previewArrow, setPreviewArrow] = useState(null);
+  const [drawMode, setDrawMode] = useState(false);
+  const drawStartRef = useRef(null);
+  const boardElRef = useRef(null);
   // Game record for the post-game review.
   const [evalHistory, setEvalHistory] = useState([]); // static eval after each ply
   const [gradeLog, setGradeLog] = useState([]); // { moveStr, loss } per graded move
@@ -186,6 +195,12 @@ export default function ChessEngineLab() {
   const gameOver = status === "checkmate" || status === "stalemate";
 
   const handleSquareClick = (r, c) => {
+    if (drawMode) return; // clicks draw, they don't move pieces
+    // Any left click wipes the sketch, like on chess.com.
+    if (userArrows.length || userHighlights.length) {
+      setUserArrows([]);
+      setUserHighlights([]);
+    }
     if (thinking || gameOver || turn !== playerColor) return;
 
     const move = targets.find((m) => m.toR === r && m.toC === c);
@@ -343,6 +358,10 @@ export default function ChessEngineLab() {
     setGameCounts({});
     setEvalHistory([]);
     setGradeLog([]);
+    setUserArrows([]);
+    setUserHighlights([]);
+    setPreviewArrow(null);
+    drawStartRef.current = null;
     yourMovesRef.current = [];
     if (color === BLACK) {
       // You chose Black, so the engine opens the game as White.
@@ -438,16 +457,87 @@ export default function ChessEngineLab() {
         color: "green",
       });
     }
-    // When the board is displayed flipped, arrow geometry flips with it.
-    if (orientBlack) {
-      return arrows.map((a) => ({
-        ...a,
-        from: [7 - a.from[0], 7 - a.from[1]],
-        to: [7 - a.to[0], 7 - a.to[1]],
-      }));
-    }
     return arrows;
-  }, [teacherMode, lastMove, threats, hint, hintLevel, engineColor, orientBlack]);
+  }, [teacherMode, lastMove, threats, hint, hintLevel, engineColor]);
+
+  // Everything drawn on the board — coach arrows, your sketched arrows, and
+  // the drag preview — flipped together to match the display orientation.
+  const allArrows = useMemo(() => {
+    const arrows = [...boardArrows, ...userArrows];
+    if (previewArrow) arrows.push(previewArrow);
+    if (!orientBlack) return arrows;
+    return arrows.map((a) => ({
+      ...a,
+      from: [7 - a.from[0], 7 - a.from[1]],
+      to: [7 - a.to[0], 7 - a.to[1]],
+    }));
+  }, [boardArrows, userArrows, previewArrow, orientBlack]);
+
+  /** The board square under a pointer event, in board coordinates. */
+  const squareAt = (clientX, clientY) => {
+    const el = boardElRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const dc = Math.floor(((clientX - rect.left) / rect.width) * 8);
+    const dr = Math.floor(((clientY - rect.top) / rect.height) * 8);
+    if (dr < 0 || dr > 7 || dc < 0 || dc > 7) return null;
+    return { r: orientBlack ? 7 - dr : dr, c: orientBlack ? 7 - dc : dc };
+  };
+
+  // Sketch color: plain drag = yellow; hold Shift for red, Alt for blue,
+  // Ctrl/Cmd for green.
+  const sketchColor = (e) =>
+    e.shiftKey ? "red" : e.altKey ? "blue" : e.ctrlKey || e.metaKey ? "green" : "yellow";
+
+  const onBoardPointerDown = (e) => {
+    const drawing = e.button === 2 || (drawMode && (e.button === 0 || e.pointerType === "touch"));
+    if (!drawing) return;
+    const sq = squareAt(e.clientX, e.clientY);
+    if (!sq) return;
+    e.preventDefault();
+    drawStartRef.current = { sq, color: sketchColor(e) };
+    boardElRef.current?.setPointerCapture?.(e.pointerId);
+  };
+
+  const onBoardPointerMove = (e) => {
+    const start = drawStartRef.current;
+    if (!start) return;
+    const sq = squareAt(e.clientX, e.clientY);
+    if (!sq || (sq.r === start.sq.r && sq.c === start.sq.c)) {
+      setPreviewArrow(null);
+      return;
+    }
+    setPreviewArrow({ from: [start.sq.r, start.sq.c], to: [sq.r, sq.c], color: start.color });
+  };
+
+  const onBoardPointerUp = (e) => {
+    const start = drawStartRef.current;
+    if (!start) return;
+    drawStartRef.current = null;
+    setPreviewArrow(null);
+    const sq = squareAt(e.clientX, e.clientY);
+    if (!sq) return;
+    if (sq.r === start.sq.r && sq.c === start.sq.c) {
+      // A drag that stays on one square toggles a highlight ring.
+      const key = `${sq.r}-${sq.c}`;
+      setUserHighlights((h) =>
+        h.includes(key) ? h.filter((k) => k !== key) : [...h, key]
+      );
+      return;
+    }
+    const same = (a) =>
+      a.from[0] === start.sq.r && a.from[1] === start.sq.c &&
+      a.to[0] === sq.r && a.to[1] === sq.c;
+    setUserArrows((arr) => {
+      const existing = arr.find(same);
+      // Redrawing an identical arrow erases it; a new color replaces it.
+      if (existing && existing.color === start.color) return arr.filter((a) => !same(a));
+      return [
+        ...arr.filter((a) => !same(a)),
+        { from: [start.sq.r, start.sq.c], to: [sq.r, sq.c], color: start.color },
+      ];
+    });
+  };
 
   // A Socratic prompt for the coach panel — a question, not an answer.
   const socratic = useMemo(() => {
@@ -541,9 +631,14 @@ export default function ChessEngineLab() {
           </div>
 
           <div
-            className={"board" + (blindfold ? " blindfold" : "")}
+            ref={boardElRef}
+            className={"board" + (blindfold ? " blindfold" : "") + (drawMode ? " drawing" : "")}
             role="grid"
             aria-label={`Board, you play ${playerColor === WHITE ? "White" : "Black"}`}
+            onContextMenu={(e) => e.preventDefault()}
+            onPointerDown={onBoardPointerDown}
+            onPointerMove={onBoardPointerMove}
+            onPointerUp={onBoardPointerUp}
           >
             {Array.from({ length: 8 }, (_, dr) =>
               Array.from({ length: 8 }, (_, dc) => {
@@ -565,6 +660,7 @@ export default function ChessEngineLab() {
                   isLast ? "last-move" : "",
                   threatSquares.has(`${r}-${c}`) ? "threat" : "",
                   hintSquares.has(`${r}-${c}`) ? "hint" : "",
+                  userHighlights.includes(`${r}-${c}`) ? "user-hl" : "",
                 ].join(" ");
                 return (
                   <button
@@ -587,7 +683,7 @@ export default function ChessEngineLab() {
                 );
               })
             )}
-            <ArrowLayer arrows={boardArrows} />
+            <ArrowLayer arrows={allArrows} />
           </div>
 
           {teacherMode && boardArrows.length > 0 && (
@@ -624,6 +720,14 @@ export default function ChessEngineLab() {
             <button className="reset" onClick={reset}>New game</button>
             <button className="reset" onClick={() => setFlipped((f) => !f)} title="Rotate the board 180°">
               Flip board
+            </button>
+            <button
+              className={"reset" + (drawMode ? " draw-active" : "")}
+              onClick={() => setDrawMode((d) => !d)}
+              aria-pressed={drawMode}
+              title="Sketch plans: drag to draw arrows, tap a square to highlight it. Right-click-drag always draws, even with this off. Shift = red, Alt = blue, Ctrl = green. Left click clears."
+            >
+              ✏️ Draw
             </button>
             <div className="side-picker" role="group" aria-label="Choose your side (starts a new game)">
               <span className="muted small">You play</span>

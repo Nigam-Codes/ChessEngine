@@ -624,6 +624,20 @@ button {
 
 .blindfold .piece { visibility: hidden; }
 
+/* ---- User-drawn annotations ---- */
+
+.square.user-hl {
+  box-shadow: inset 0 0 0 4px rgba(242, 193, 78, 0.85);
+}
+
+.board.drawing { touch-action: none; }
+.board.drawing .square { cursor: crosshair; }
+
+.draw-active {
+  border-color: var(--accent) !important;
+  color: var(--accent);
+}
+
 .socratic {
   margin: 0.6rem 0;
   padding: 0.5rem 0.6rem;

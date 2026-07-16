@@ -3,7 +3,10 @@
 Pick a side and play a small, readable chess engine — and watch it think.
 Choose White or Black (the board flips and the engine opens when you take
 Black), flip the board anytime, try blindfold mode, and get a post-game
-review with accuracy, move grades, and an evaluation graph. Switch to
+review with accuracy, move grades, and an evaluation graph. Plan your ideas
+chess.com-style: right-click-drag (or the ✏️ Draw toggle on touch screens)
+sketches arrows on the board, dragging within one square highlights it,
+Shift/Alt/Ctrl pick red/blue/green, and a left click wipes the sketch. Switch to
 **Learn mode** for hands-on drills across tactics, openings, and endgames.
 At low strength levels the engine also makes human-like mistakes instead of
 just searching shallower. See `PLAN.md` for the full roadmap toward the
