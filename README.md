@@ -3,10 +3,11 @@
 Pick a side and play a small, readable chess engine — and watch it think.
 Choose White or Black (the board flips and the engine opens when you take
 Black), flip the board anytime, try blindfold mode, and get a post-game
-review with accuracy, move grades, and an evaluation graph. Plan your ideas
-chess.com-style: right-click-drag (or the ✏️ Draw toggle on touch screens)
-sketches arrows on the board, dragging within one square highlights it,
-Shift/Alt/Ctrl pick red/blue/green, and a left click wipes the sketch. Switch to
+review with accuracy, move grades, and an evaluation graph. Castle by clicking your king two squares over — or just click the rook.
+Plan your ideas chess.com-style: right-click-drag (or the ✏️ Draw toggle on
+touch screens) sketches arrows on the board, dragging within one square
+highlights it, Shift/Alt/Ctrl pick red/blue/green, and a left click wipes
+the sketch. Flipping the board animates. Switch to
 **Learn mode** for hands-on drills across tactics, openings, and endgames.
 At low strength levels the engine also makes human-like mistakes instead of
 just searching shallower. See `PLAN.md` for the full roadmap toward the
@@ -92,11 +93,15 @@ worker grades every ply, then builds a separate report for each colour:
 
 The **Learn** tab holds "select and play" tutorials: real positions where
 you must find and play the tactic yourself. Each drill walks you through
-a line step by step — knight fork, pawn fork, attacking a pinned piece,
-skewer, discovered attack, the queen's double attack, removing the
-defender, back-rank mate, and the smothered mate on the offensive side;
-saving an attacked piece, making luft against a back-rank threat, and
-refusing a poisoned pawn on the defensive side. Wrong
+a line step by step. **Offense**: knight fork, pawn fork, attacking a
+pinned piece, skewer, discovered attack, the queen's double attack,
+removing the defender, back-rank mate, the smothered mate, the Greek Gift
+sacrifice, and en passant as a weapon. **Defense**: saving an attacked
+piece, making luft, refusing a poisoned pawn, and the three cases where
+castling is illegal. **Strategy**: opposite-side castling pawn storms, and
+connecting the rooks. **Opening**: the Italian Game, the Queen's Gambit,
+castling for king safety, and the en-passant rule. **Endgame**: pawn
+escorting, the square rule, the Philidor draw, and the rook mate. Wrong
 tries get explained (tempting traps get *specific* explanations), the
 Hint button draws the answer as a green arrow, and scripted replies keep
 the lesson on rails. Drills live in `src/drills.js`, and
@@ -123,9 +128,23 @@ detection logic is in `src/habits.js`.
 ## How the engine works
 
 The board is an 8×8 array of strings like `"wp"` (white pawn), `"bk"`
-(black king), or `""` (empty). For simplicity there is no en passant or
-castling, and pawns auto-promote to a queen. Everything else — including
-full check/checkmate/stalemate detection — is implemented.
+(black king), or `""` (empty). Pawns auto-promote to a queen; everything
+else is here, including full check/checkmate/stalemate detection,
+**castling**, and **en passant**.
+
+Those last two need state a board can't express — has the king moved? did
+a pawn *just* double-step? — so they travel in a small **context** object
+alongside the board:
+
+```js
+{ rights: { wk, wq, bk, bq }, ep: { r, c } | null }
+```
+
+Every move-generating function takes it as an optional trailing argument
+that defaults to "neither rule available", which is why lesson diagrams and
+constructed puzzle positions behave exactly as they always did. `nextContext`
+returns a fresh context after each move, so the search recurses without any
+unwind logic.
 
 ### 1. Move generation
 

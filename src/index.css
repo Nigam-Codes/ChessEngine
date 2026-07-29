@@ -633,6 +633,19 @@ button {
 .board.drawing { touch-action: none; }
 .board.drawing .square { cursor: crosshair; }
 
+/* ---- Board flip animation ---- */
+
+/* Keep --flip-ms in step with FLIP_MS in ChessEngineLab.jsx. */
+.board {
+  --flip-ms: 160ms;
+  transition: transform var(--flip-ms) ease-in;
+  transform-origin: center;
+}
+
+/* Squash the board shut; the squares swap sides while it is closed, so the
+   orientation change itself is never visible. */
+.board.flipping { transform: scaleX(0.04); }
+
 .draw-active {
   border-color: var(--accent) !important;
   color: var(--accent);
@@ -659,6 +672,7 @@ button {
 
 .tag-opening { color: #6ea8fe; }
 .tag-endgame { color: #c792ea; }
+.tag-strategy { color: #4ecdc4; }
 
 .panel-review { border-color: var(--accent); }
 

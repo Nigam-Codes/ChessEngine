@@ -23,8 +23,8 @@ const sameMove = (a, b) =>
  * Score one played move against the best move in the same position.
  * Shared by live coaching and the batch review so both grade identically.
  */
-function gradePly(board, color, played, depth) {
-  const analysis = bestMove(board, color, depth);
+function gradePly(board, color, played, depth, ctx) {
+  const analysis = bestMove(board, color, depth, ctx);
   const match = analysis.allMoves.find((m) => sameMove(m.move, played));
   return {
     played,
@@ -38,7 +38,10 @@ self.onmessage = (event) => {
   const msg = event.data;
 
   if (msg.type === "hint") {
-    self.postMessage({ type: "hint", result: bestMove(msg.board, msg.color, msg.depth) });
+    self.postMessage({
+      type: "hint",
+      result: bestMove(msg.board, msg.color, msg.depth, msg.ctx),
+    });
     return;
   }
 
@@ -47,7 +50,7 @@ self.onmessage = (event) => {
   if (msg.type === "review") {
     const grades = [];
     msg.plies.forEach((ply, i) => {
-      const g = gradePly(ply.board, ply.color, ply.played, msg.depth);
+      const g = gradePly(ply.board, ply.color, ply.played, msg.depth, ply.ctx);
       if (g.playedScore != null && g.best) {
         grades.push({
           ply: i,
@@ -67,10 +70,12 @@ self.onmessage = (event) => {
 
   let coach = null;
   if (msg.coach) {
-    coach = gradePly(msg.coach.board, msg.coach.color, msg.coach.played, msg.coach.depth);
+    coach = gradePly(
+      msg.coach.board, msg.coach.color, msg.coach.played, msg.coach.depth, msg.coach.ctx
+    );
   }
 
-  let reply = bestMove(msg.board, msg.color, msg.depth);
+  let reply = bestMove(msg.board, msg.color, msg.depth, msg.ctx);
 
   // Human-like fallibility: at low strength settings, sometimes play a
   // near-best candidate instead of the top choice (msg.fuzz = probability).

@@ -42,6 +42,67 @@ export function cloneBoard(board) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Game context: the state an 8×8 board can't express                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Two rules depend on history rather than on the current position:
+ *
+ *   - castling needs to know whether the king or that rook has ever moved;
+ *   - en passant needs to know whether a pawn double-stepped *last move*.
+ *
+ * Both live in a small "context" object that travels alongside the board:
+ *   { rights: { wk, wq, bk, bq }, ep: { r, c } | null }
+ * where `ep` is the square a capturing pawn would land on.
+ *
+ * Every function that generates moves takes this as an optional trailing
+ * argument. The default is EMPTY_CONTEXT — no castling, no en passant — so
+ * constructed positions (lesson diagrams, coach scans, puzzle boards) behave
+ * exactly as they did before these rules existed, and only callers that opt in
+ * get the extra moves.
+ */
+export const EMPTY_CONTEXT = Object.freeze({
+  rights: Object.freeze({ wk: false, wq: false, bk: false, bq: false }),
+  ep: null,
+});
+
+/** Full castling rights and no en-passant target — the game start. */
+export function initialContext() {
+  return { rights: { wk: true, wq: true, bk: true, bq: true }, ep: null };
+}
+
+// Which right a rook sitting on each corner belongs to.
+const CORNER_RIGHTS = { "7,0": "wq", "7,7": "wk", "0,0": "bq", "0,7": "bk" };
+
+/**
+ * The context *after* `move` is played. Returns a fresh object — contexts are
+ * never mutated, so the search can recurse without any unwind logic.
+ */
+export function nextContext(ctx, move) {
+  const rights = { ...ctx.rights };
+  const color = move.piece[0];
+
+  // Moving the king gives up both rights forever.
+  if (move.piece[1] === "k") {
+    rights[color === WHITE ? "wk" : "bk"] = false;
+    rights[color === WHITE ? "wq" : "bq"] = false;
+  }
+  // Moving a rook off its corner gives up that side.
+  const from = CORNER_RIGHTS[`${move.fromR},${move.fromC}`];
+  if (from && move.piece[1] === "r") rights[from] = false;
+  // Capturing a rook *on* its corner does too — the rook never "moved", so
+  // this is the case that's easy to forget and quietly allows illegal castling.
+  const to = CORNER_RIGHTS[`${move.toR},${move.toC}`];
+  if (to && move.captured && move.captured[1] === "r") rights[to] = false;
+
+  // En passant is offered for exactly one move, and only after a double step.
+  const doubleStep = move.piece[1] === "p" && Math.abs(move.toR - move.fromR) === 2;
+  const ep = doubleStep ? { r: (move.fromR + move.toR) / 2, c: move.fromC } : null;
+
+  return { rights, ep };
+}
+
+/* ------------------------------------------------------------------ */
 /* 1. Move generation                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -79,7 +140,7 @@ function addMove(moves, board, fromR, fromC, toR, toC, promotion = "") {
  * physically make, ignoring whether it leaves its own king in check.
  * legalMoves() filters those out afterwards.
  */
-export function generateMoves(board, color) {
+export function generateMoves(board, color, ctx = EMPTY_CONTEXT) {
   const moves = [];
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
@@ -106,6 +167,19 @@ export function generateMoves(board, color) {
           const tr = r + dir, tc = c + dc;
           if (onBoard(tr, tc) && board[tr][tc] && board[tr][tc][0] !== color) {
             addMove(moves, board, r, c, tr, tc, promo(tr));
+          }
+          // En passant: the target square is empty, so the captured pawn sits
+          // beside us rather than where we land. That's why the move records
+          // the victim's real square.
+          if (ctx.ep && tr === ctx.ep.r && tc === ctx.ep.c && board[tr][tc] === "") {
+            const victim = board[r][tc];
+            if (victim && victim[0] !== color && victim[1] === "p") {
+              moves.push({
+                fromR: r, fromC: c, toR: tr, toC: tc,
+                piece, captured: victim, promotion: "",
+                epCapture: true, capturedR: r, capturedC: tc,
+              });
+            }
           }
         }
       } else if (type === "n" || type === "k") {
@@ -137,18 +211,77 @@ export function generateMoves(board, color) {
       }
     }
   }
+
+  addCastlingMoves(moves, board, color, ctx);
   return moves;
 }
 
-/** Apply a move in place. unmakeMove() restores it exactly. */
+/**
+ * Castling — the one move where two pieces travel at once.
+ *
+ * Three conditions beyond "the right still exists": the squares between king
+ * and rook are empty, the king is not currently in check, and it does not pass
+ * *through* an attacked square. Landing in check is caught for free by
+ * legalMoves(), which filters every move that leaves the king attacked.
+ */
+function addCastlingMoves(moves, board, color, ctx) {
+  const row = color === WHITE ? 7 : 0;
+  const king = color + "k";
+  const rook = color + "r";
+  if (board[row][4] !== king) return; // king not home ⇒ nothing to do
+
+  const enemy = opposite(color);
+  const attacked = (c) => isSquareAttacked(board, row, c, enemy);
+  // Castling out of check is illegal, so test it once up front.
+  if (attacked(4)) return;
+
+  const sides = [
+    { right: color === WHITE ? "wk" : "bk", rookC: 7, empty: [5, 6], kingTo: 6, cross: 5, flag: "K" },
+    { right: color === WHITE ? "wq" : "bq", rookC: 0, empty: [1, 2, 3], kingTo: 2, cross: 3, flag: "Q" },
+  ];
+
+  for (const s of sides) {
+    if (!ctx.rights[s.right]) continue;
+    if (board[row][s.rookC] !== rook) continue;
+    if (s.empty.some((c) => board[row][c] !== "")) continue;
+    // The square the king steps over must be safe (b1/b8 may be attacked —
+    // only the rook crosses it, and rooks are allowed to be attacked).
+    if (attacked(s.cross)) continue;
+    moves.push({
+      fromR: row, fromC: 4, toR: row, toC: s.kingTo,
+      piece: king, captured: "", promotion: "",
+      castle: s.flag, rook: { fromC: s.rookC, toC: s.cross },
+    });
+  }
+}
+
+/**
+ * Apply a move in place. unmakeMove() restores it exactly — the search relies
+ * on that being lossless, so both special moves carry everything needed to
+ * reverse them (the rook's squares, or the captured pawn's real square).
+ */
 export function makeMove(board, move) {
   board[move.toR][move.toC] = move.promotion || move.piece;
   board[move.fromR][move.fromC] = "";
+  if (move.castle) {
+    board[move.toR][move.rook.toC] = board[move.toR][move.rook.fromC];
+    board[move.toR][move.rook.fromC] = "";
+  } else if (move.epCapture) {
+    // The victim isn't on the square we landed on.
+    board[move.capturedR][move.capturedC] = "";
+  }
 }
 
 export function unmakeMove(board, move) {
   board[move.fromR][move.fromC] = move.piece;
   board[move.toR][move.toC] = move.captured;
+  if (move.castle) {
+    board[move.toR][move.rook.fromC] = board[move.toR][move.rook.toC];
+    board[move.toR][move.rook.toC] = "";
+  } else if (move.epCapture) {
+    board[move.toR][move.toC] = ""; // we landed on an empty square
+    board[move.capturedR][move.capturedC] = move.captured;
+  }
 }
 
 /** Convenience for the UI: returns a *new* board with the move applied. */
@@ -226,9 +359,9 @@ export function inCheck(board, color) {
  * the mover's own king in check. We test each one by playing it, asking
  * "is my king attacked now?", and taking it back.
  */
-export function legalMoves(board, color) {
+export function legalMoves(board, color, ctx = EMPTY_CONTEXT) {
   const legal = [];
-  for (const move of generateMoves(board, color)) {
+  for (const move of generateMoves(board, color, ctx)) {
     makeMove(board, move);
     if (!inCheck(board, color)) legal.push(move);
     unmakeMove(board, move);
@@ -237,8 +370,8 @@ export function legalMoves(board, color) {
 }
 
 /** "playing" | "check" | "checkmate" | "stalemate" for the side to move. */
-export function getGameStatus(board, colorToMove) {
-  const hasMoves = legalMoves(board, colorToMove).length > 0;
+export function getGameStatus(board, colorToMove, ctx = EMPTY_CONTEXT) {
+  const hasMoves = legalMoves(board, colorToMove, ctx).length > 0;
   const check = inCheck(board, colorToMove);
   if (!hasMoves) return check ? "checkmate" : "stalemate";
   return check ? "check" : "playing";
@@ -362,6 +495,9 @@ export function orderMoves(moves) {
     let p = 0;
     if (m.captured) p += 10 * PIECE_VALUES[m.captured[1]] - PIECE_VALUES[m.piece[1]];
     if (m.promotion) p += PIECE_VALUES.q;
+    // Castling is so often right that trying it early pays for itself in extra
+    // alpha-beta cutoffs — but it must still rank below any real capture.
+    if (m.castle) p += 50;
     return p;
   };
   return moves
@@ -382,7 +518,7 @@ export function orderMoves(moves) {
  * the current evaluation — capturing is never mandatory in chess, so a
  * bad capture shouldn't drag the score down.
  */
-export function quiescence(board, alpha, beta, color, stats) {
+export function quiescence(board, alpha, beta, color, stats, ctx = EMPTY_CONTEXT) {
   stats.nodes++;
 
   const standPat = evaluate(board);
@@ -397,7 +533,7 @@ export function quiescence(board, alpha, beta, color, stats) {
   // Only captures matter here, so filter *before* the (expensive) legality
   // check instead of legality-checking every quiet move we'd throw away.
   const legalCaptures = [];
-  for (const move of generateMoves(board, color)) {
+  for (const move of generateMoves(board, color, ctx)) {
     if (!move.captured) continue;
     makeMove(board, move);
     if (!inCheck(board, color)) legalCaptures.push(move);
@@ -407,7 +543,7 @@ export function quiescence(board, alpha, beta, color, stats) {
   for (let i = 0; i < captures.length; i++) {
     const move = captures[i];
     makeMove(board, move);
-    const score = quiescence(board, alpha, beta, opposite(color), stats);
+    const score = quiescence(board, alpha, beta, opposite(color), stats, nextContext(ctx, move));
     unmakeMove(board, move);
 
     if (color === WHITE) {
@@ -438,11 +574,11 @@ export function quiescence(board, alpha, beta, color, stats) {
  * `stats` accumulates { nodes, pruned } across the whole search.
  * Returns the score of the position, from White's perspective.
  */
-export function search(board, depth, alpha, beta, color, stats) {
-  if (depth === 0) return quiescence(board, alpha, beta, color, stats);
+export function search(board, depth, alpha, beta, color, stats, ctx = EMPTY_CONTEXT) {
+  if (depth === 0) return quiescence(board, alpha, beta, color, stats, ctx);
   stats.nodes++;
 
-  const moves = orderMoves(legalMoves(board, color));
+  const moves = orderMoves(legalMoves(board, color, ctx));
   if (moves.length === 0) {
     if (inCheck(board, color)) {
       // Checkmate. Adding `depth` makes nearer mates score higher, so the
@@ -456,7 +592,7 @@ export function search(board, depth, alpha, beta, color, stats) {
     let best = -Infinity;
     for (let i = 0; i < moves.length; i++) {
       makeMove(board, moves[i]);
-      const score = search(board, depth - 1, alpha, beta, BLACK, stats);
+      const score = search(board, depth - 1, alpha, beta, BLACK, stats, nextContext(ctx, moves[i]));
       unmakeMove(board, moves[i]);
       if (score > best) best = score;
       if (score > alpha) alpha = score;
@@ -470,7 +606,7 @@ export function search(board, depth, alpha, beta, color, stats) {
     let best = Infinity;
     for (let i = 0; i < moves.length; i++) {
       makeMove(board, moves[i]);
-      const score = search(board, depth - 1, alpha, beta, WHITE, stats);
+      const score = search(board, depth - 1, alpha, beta, WHITE, stats, nextContext(ctx, moves[i]));
       unmakeMove(board, moves[i]);
       if (score < best) best = score;
       if (score < beta) beta = score;
@@ -507,14 +643,14 @@ export function search(board, depth, alpha, beta, color, stats) {
  *                  // whatever move the player actually chose)
  *   }
  */
-export function bestMove(board, color, depth) {
+export function bestMove(board, color, depth, ctx = EMPTY_CONTEXT) {
   const stats = { nodes: 0, pruned: 0 };
-  const moves = orderMoves(legalMoves(board, color));
+  const moves = orderMoves(legalMoves(board, color, ctx));
 
   const scored = [];
   for (const move of moves) {
     makeMove(board, move);
-    const score = search(board, depth - 1, -Infinity, Infinity, opposite(color), stats);
+    const score = search(board, depth - 1, -Infinity, Infinity, opposite(color), stats, nextContext(ctx, move));
     unmakeMove(board, move);
     scored.push({ move, score });
   }
@@ -542,6 +678,7 @@ export function squareName(r, c) {
 
 /** Compact human-readable notation, e.g. "Nf3", "exd5", "e8=Q". */
 export function moveToString(move) {
+  if (move.castle) return move.castle === "K" ? "O-O" : "O-O-O";
   const type = move.piece[1];
   const capture = move.captured ? "x" : "";
   const target = squareName(move.toR, move.toC);

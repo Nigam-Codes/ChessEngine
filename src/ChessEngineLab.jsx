@@ -11,6 +11,8 @@ import {
   moveToString,
   squareName,
   inCheck,
+  initialContext,
+  nextContext,
 } from "./engine.js";
 import LearnMode from "./LearnMode.jsx";
 import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
@@ -34,6 +36,9 @@ const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthl
 const FUZZ_BY_DEPTH = [0, 0.6, 0.3, 0, 0, 0, 0];
 
 const COLOR_NAME = { w: "White", b: "Black" };
+// Half the flip: squash shut, swap sides, open again. Matches --flip-ms in the
+// stylesheet — keep the two in step.
+const FLIP_MS = 160;
 
 function statusText(status, turn, thinking, playerColor, vsHuman) {
   // `turn` is the side to move — and when the game is over, the side that has
@@ -91,6 +96,8 @@ export default function ChessEngineLab() {
   // Every ply of this game, captured before the move was applied. This is the
   // input for the post-game coach report (and, later, PGN export).
   const [plyLog, setPlyLog] = useState([]);
+  // Castling rights + en-passant target: the rules state a board can't hold.
+  const [ctx, setCtx] = useState(initialContext);
   const [reviewGrades, setReviewGrades] = useState(null);
   const [reviewProgress, setReviewProgress] = useState(null);
   const [reviewColor, setReviewColor] = useState(WHITE); // which report is shown
@@ -120,6 +127,8 @@ export default function ChessEngineLab() {
   boardRef.current = board;
   const playerColorRef = useRef(playerColor);
   playerColorRef.current = playerColor;
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
   // Your moves so far this game, for opening-habit detection.
   const yourMovesRef = useRef([]);
 
@@ -194,7 +203,9 @@ export default function ChessEngineLab() {
       }
       if (!result.move) return;
       const next = applyMove(boardRef.current, result.move);
-      const newStatus = getGameStatus(next, pc);
+      const afterCtx = nextContext(ctxRef.current, result.move);
+      setCtx(afterCtx);
+      const newStatus = getGameStatus(next, pc, afterCtx);
       if (newStatus === "checkmate" || newStatus === "stalemate") recordGameEnd();
       setBoard(next);
       setStatus(newStatus);
@@ -219,10 +230,10 @@ export default function ChessEngineLab() {
   // Legal moves for the currently selected piece.
   const targets = useMemo(() => {
     if (!selected) return [];
-    return legalMoves(board, controlledColor).filter(
+    return legalMoves(board, controlledColor, ctx).filter(
       (m) => m.fromR === selected.r && m.fromC === selected.c
     );
-  }, [board, selected, controlledColor]);
+  }, [board, selected, controlledColor, ctx]);
 
   const gameOver = status === "checkmate" || status === "stalemate";
 
@@ -235,21 +246,28 @@ export default function ChessEngineLab() {
     }
     if (thinking || gameOver || turn !== controlledColor) return;
 
-    const move = targets.find((m) => m.toR === r && m.toC === c);
+    // Castling can be entered two ways: click the king two squares over (the
+    // move already appears as a normal target), or click your own rook — which
+    // is easier to hit on a phone than c1 next to b1.
+    const move =
+      targets.find((m) => m.toR === r && m.toC === c) ||
+      targets.find((m) => m.castle && m.toR === r && m.rook.fromC === c);
     if (move) {
       setPast((p) => [
         ...p,
         {
           board, lastMove, telemetry, status, history, coachReport, threats,
-          evalHistory, gradeLog, turn,
+          evalHistory, gradeLog, turn, ctx,
           yourMoves: yourMovesRef.current,
         },
       ]);
       const next = applyMove(board, move);
-      const newStatus = getGameStatus(next, opposite(turn));
+      const afterCtx = nextContext(ctx, move);
+      setCtx(afterCtx);
+      const newStatus = getGameStatus(next, opposite(turn), afterCtx);
       // Record the ply for the post-game report, capturing the position it was
       // played in so the review can grade it exactly as it happened.
-      setPlyLog((p) => [...p, { board, played: move, color: turn }]);
+      setPlyLog((p) => [...p, { board, played: move, color: turn, ctx }]);
       // Habit tracking is a personal profile — pause it in hot-seat so an
       // opponent's blunders never land in your lifetime stats.
       if (!vsHuman) {
@@ -298,11 +316,12 @@ export default function ChessEngineLab() {
         board: next,
         color: engineColor,
         depth: depthRef.current,
+        ctx: afterCtx,
         fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
         // In teacher mode, also grade the move just played: analyze the
         // position it was played *in* (the pre-move board).
         coach: teacherMode
-          ? { board, color: playerColor, depth: coachDepth, played: move }
+          ? { board, color: playerColor, depth: coachDepth, played: move, ctx }
           : null,
       });
       return;
@@ -331,6 +350,7 @@ export default function ChessEngineLab() {
       board,
       color: playerColor,
       depth: coachDepth,
+      ctx,
     });
   };
 
@@ -375,6 +395,7 @@ export default function ChessEngineLab() {
     // comes back to you. In hot-seat every ply is snapshotted, so hand the
     // turn back to whoever played the move being taken back.
     setTurn(vsHuman ? prev.turn : playerColor);
+    setCtx(prev.ctx);
     setPlyLog((p) => p.slice(0, -1));
     setReviewGrades(null);
     setSelected(null);
@@ -395,6 +416,9 @@ export default function ChessEngineLab() {
     const worker = makeWorker();
     workerRef.current = worker;
     const fresh = initialBoard();
+    const freshCtx = initialContext();
+    setCtx(freshCtx);
+    ctxRef.current = freshCtx;
     setPlayerColor(color);
     playerColorRef.current = color;
     setBoard(fresh);
@@ -431,6 +455,7 @@ export default function ChessEngineLab() {
         board: fresh,
         color: WHITE,
         depth: depthRef.current,
+        ctx: freshCtx,
         fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
         coach: null,
       });
@@ -511,7 +536,46 @@ export default function ChessEngineLab() {
   // side to move, so each player sees their own pieces nearest them. The manual
   // Flip button XORs on top of either.
   const bottomColor = vsHuman ? (autoFlip ? turn : WHITE) : playerColor;
-  const orientBlack = (bottomColor === BLACK) !== flipped;
+  const targetOrient = (bottomColor === BLACK) !== flipped;
+
+  // Card-flip animation. `orientBlack` lags one beat behind the target so the
+  // board can squash shut, swap sides at the midpoint, and open again. Driving
+  // it off the derived orientation means both triggers animate: the Flip board
+  // button and the hot-seat auto-flip between turns.
+  const [orientBlack, setOrientBlack] = useState(targetOrient);
+  const [flipping, setFlipping] = useState(false);
+  // Read the current orientation through a ref so the effect below depends on
+  // the *target* alone. Depending on `orientBlack` too would re-run the effect
+  // the moment the mid-flip swap lands, and its cleanup would cancel the very
+  // timer that re-opens the board — leaving it squashed shut forever.
+  const orientRef = useRef(orientBlack);
+  orientRef.current = orientBlack;
+
+  useEffect(() => {
+    if (targetOrient === orientRef.current) {
+      // Nothing to do — but a flip already in flight was just cancelled (e.g.
+      // hitting Flip board mid-auto-flip lands us back where we started), so
+      // make sure the board doesn't stay squashed shut.
+      setFlipping(false);
+      return;
+    }
+    // Someone who asked for less motion gets the swap with no theatre — and
+    // crucially no timer, which a CSS-only override would leave stalling.
+    const reduced =
+      typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+      setOrientBlack(targetOrient);
+      return;
+    }
+    setFlipping(true);
+    const swap = setTimeout(() => setOrientBlack(targetOrient), FLIP_MS);
+    const open = setTimeout(() => setFlipping(false), FLIP_MS * 2);
+    return () => {
+      clearTimeout(swap);
+      clearTimeout(open);
+    };
+  }, [targetOrient]);
 
   const boardArrows = useMemo(() => {
     if (!teacherMode) return [];
@@ -714,7 +778,12 @@ export default function ChessEngineLab() {
 
           <div
             ref={boardElRef}
-            className={"board" + (blindfold ? " blindfold" : "") + (drawMode ? " drawing" : "")}
+            className={
+              "board" +
+              (blindfold ? " blindfold" : "") +
+              (drawMode ? " drawing" : "") +
+              (flipping ? " flipping" : "")
+            }
             role="grid"
             aria-label={`Board, you play ${playerColor === WHITE ? "White" : "Black"}`}
             onContextMenu={(e) => e.preventDefault()}

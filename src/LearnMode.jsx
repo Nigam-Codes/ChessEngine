@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { WHITE, BLACK, legalMoves, applyMove, cloneBoard, squareName } from "./engine.js";
+import {
+  WHITE, BLACK, legalMoves, applyMove, cloneBoard, squareName,
+  EMPTY_CONTEXT, nextContext,
+} from "./engine.js";
 import { GLYPHS } from "./MiniBoard.jsx";
 import ArrowLayer from "./Arrows.jsx";
 import { DRILLS } from "./drills.js";
@@ -10,10 +13,11 @@ import { DRILLS } from "./drills.js";
  * White here), a scripted opponent replies, and every step explains what
  * just happened. Wrong tries get feedback instead of a lost game.
  */
-const CATEGORIES = ["All", "Offense", "Defense", "Opening", "Endgame"];
+const CATEGORIES = ["All", "Offense", "Defense", "Strategy", "Opening", "Endgame"];
 const TAG_CLASS = {
   Offense: "tag-offense",
   Defense: "tag-defense",
+  Strategy: "tag-strategy",
   Opening: "tag-opening",
   Endgame: "tag-endgame",
 };
@@ -23,6 +27,10 @@ export default function LearnMode() {
   const [drillIndex, setDrillIndex] = useState(0);
   const drill = DRILLS[drillIndex];
   const [board, setBoard] = useState(() => cloneBoard(drill.position));
+  // Castling rights / en-passant target for this drill. Most drills are
+  // constructed positions with neither, so the default is EMPTY_CONTEXT and
+  // only the drills that teach those rules opt in via `drill.context`.
+  const [ctx, setCtx] = useState(() => drill.context || EMPTY_CONTEXT);
   const [stepIndex, setStepIndex] = useState(0);
   const [selected, setSelected] = useState(null);
   const [lastMove, setLastMove] = useState(null);
@@ -35,6 +43,7 @@ export default function LearnMode() {
   const loadDrill = (i) => {
     setDrillIndex(i);
     setBoard(cloneBoard(DRILLS[i].position));
+    setCtx(DRILLS[i].context || EMPTY_CONTEXT);
     setStepIndex(0);
     setSelected(null);
     setLastMove(null);
@@ -44,14 +53,18 @@ export default function LearnMode() {
 
   const targets = useMemo(() => {
     if (!selected || done) return [];
-    return legalMoves(board, WHITE).filter(
+    return legalMoves(board, WHITE, ctx).filter(
       (m) => m.fromR === selected.r && m.fromC === selected.c
     );
-  }, [board, selected, done]);
+  }, [board, selected, done, ctx]);
 
   const handleClick = (r, c) => {
     if (done) return;
-    const move = targets.find((m) => m.toR === r && m.toC === c);
+    // Same castling shortcut as the main board: click the king two squares
+    // over, or click your own rook.
+    const move =
+      targets.find((m) => m.toR === r && m.toC === c) ||
+      targets.find((m) => m.castle && m.toR === r && m.rook.fromC === c);
     if (move) {
       const correct = step.accept.some(
         (a) =>
@@ -71,21 +84,25 @@ export default function LearnMode() {
         setSelected(null);
         return;
       }
-      // Correct: play it, then the scripted reply.
+      // Correct: play it, then the scripted reply. The context advances with
+      // each ply so a drill can castle, or offer an en-passant capture.
       let next = applyMove(board, move);
+      let nextCtx = nextContext(ctx, move);
       let last = move;
       if (step.reply) {
-        const reply = legalMoves(next, BLACK).find(
+        const reply = legalMoves(next, BLACK, nextCtx).find(
           (m) =>
             m.fromR === step.reply.from[0] && m.fromC === step.reply.from[1] &&
             m.toR === step.reply.to[0] && m.toC === step.reply.to[1]
         );
         if (reply) {
           next = applyMove(next, reply);
+          nextCtx = nextContext(nextCtx, reply);
           last = reply;
         }
       }
       const isLastStep = stepIndex + 1 >= drill.steps.length;
+      setCtx(nextCtx);
       setBoard(next);
       setLastMove(last);
       setSelected(null);

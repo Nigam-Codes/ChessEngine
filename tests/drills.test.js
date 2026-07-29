@@ -4,7 +4,10 @@
  * Run with: npm test
  */
 import assert from "node:assert/strict";
-import { cloneBoard, legalMoves, applyMove, getGameStatus, WHITE, BLACK } from "../src/engine.js";
+import {
+  cloneBoard, legalMoves, applyMove, getGameStatus,
+  EMPTY_CONTEXT, nextContext, WHITE, BLACK,
+} from "../src/engine.js";
 import { DRILLS } from "../src/drills.js";
 
 let passed = 0;
@@ -24,8 +27,9 @@ const findMove = (moves, target) =>
 for (const drill of DRILLS) {
   test(`drill "${drill.id}": every scripted move is legal`, () => {
     let board = cloneBoard(drill.position);
+    let ctx = drill.context || EMPTY_CONTEXT;
     for (const [i, step] of drill.steps.entries()) {
-      const whiteMoves = legalMoves(board, WHITE);
+      const whiteMoves = legalMoves(board, WHITE, ctx);
       // Every accepted answer must be playable in this position.
       for (const acc of step.accept) {
         assert.ok(
@@ -41,11 +45,14 @@ for (const drill of DRILLS) {
         );
       }
       // Advance the line: primary answer, then the scripted reply.
-      board = applyMove(board, findMove(whiteMoves, step.accept[0]));
+      const played = findMove(whiteMoves, step.accept[0]);
+      board = applyMove(board, played);
+      ctx = nextContext(ctx, played);
       if (step.reply) {
-        const reply = findMove(legalMoves(board, BLACK), step.reply);
+        const reply = findMove(legalMoves(board, BLACK, ctx), step.reply);
         assert.ok(reply, `step ${i + 1}: scripted reply is not legal`);
         board = applyMove(board, reply);
+        ctx = nextContext(ctx, reply);
       }
     }
   });
@@ -54,11 +61,18 @@ for (const drill of DRILLS) {
 for (const drill of DRILLS.filter((d) => d.endsInMate)) {
   test(`drill "${drill.id}" ends in checkmate`, () => {
     let board = cloneBoard(drill.position);
+    let ctx = drill.context || EMPTY_CONTEXT;
     for (const step of drill.steps) {
-      board = applyMove(board, findMove(legalMoves(board, WHITE), step.accept[0]));
-      if (step.reply) board = applyMove(board, findMove(legalMoves(board, BLACK), step.reply));
+      const played = findMove(legalMoves(board, WHITE, ctx), step.accept[0]);
+      board = applyMove(board, played);
+      ctx = nextContext(ctx, played);
+      if (step.reply) {
+        const reply = findMove(legalMoves(board, BLACK, ctx), step.reply);
+        board = applyMove(board, reply);
+        ctx = nextContext(ctx, reply);
+      }
     }
-    assert.equal(getGameStatus(board, BLACK), "checkmate");
+    assert.equal(getGameStatus(board, BLACK, ctx), "checkmate");
   });
 }
 

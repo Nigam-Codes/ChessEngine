@@ -12,7 +12,16 @@
  * with the engine's rules.
  */
 
-import { initialBoard } from "./engine.js";
+import { initialBoard, initialContext } from "./engine.js";
+
+/** Castling rights intact, no en-passant target — for drills that castle. */
+const canCastle = () => initialContext();
+
+/** An en-passant target square, e.g. epAt("d6"). */
+const epAt = (sq) => ({
+  rights: { wk: false, wq: false, bk: false, bq: false },
+  ep: { r: 8 - Number(sq[1]), c: sq.charCodeAt(0) - 97 },
+});
 
 /** Build an 8×8 board from { e4: "wp", g8: "bk", ... }. */
 function pos(pieces) {
@@ -424,6 +433,252 @@ export const DRILLS = [
     ],
     outro:
       "The lesson generalizes: center pawns are worth more than side pawns, and 'free' pawns often cost the center.",
+  },
+  {
+    id: "castle-safety",
+    title: "Castling: get the king to safety",
+    tactic: "Opening",
+    intro:
+      "Your king is still in the centre where the files are about to open — the most dangerous place on the board. Castling solves two problems in one move: it tucks the king behind a wall of pawns and brings a rook towards the middle.",
+    position: pos({
+      e1: "wk", h1: "wr", a1: "wr", c4: "wb", g1: "wn",
+      e4: "wp", d4: "wp", f2: "wp", g2: "wp", h2: "wp",
+      e8: "bk", h8: "br", e5: "bp", d6: "bp", a7: "bp",
+    }),
+    context: canCastle(),
+    steps: [
+      {
+        task: "Clear the last piece between your king and the rook.",
+        accept: [mv("g1", "f3"), mv("g1", "e2"), mv("g1", "h3")],
+        reply: mv("a7", "a6"),
+        explain:
+          "You can only castle when every square between king and rook is empty — so the knight had to go first. Nf3 also defends e5 and heads for the centre.",
+        hint: { text: "The knight on g1 is in the way — develop it.", arrow: mv("g1", "f3") },
+      },
+      {
+        task: "Now castle. Click the king two squares over — or just click your rook.",
+        accept: [mv("e1", "g1")],
+        reply: null,
+        explain:
+          "O-O! The king hides on g1 behind three untouched pawns, and the rook lands on f1 pointing down the half-open f-file. One move, two jobs done.",
+        hint: { text: "King to g1 — the rook jumps over to f1 by itself.", arrow: mv("e1", "g1") },
+        traps: [
+          {
+            to: rc("d2"),
+            text: "Walking the king forward keeps it in the danger zone — and it forfeits castling forever. Castle instead.",
+          },
+        ],
+      },
+    ],
+    outro:
+      "Rule of thumb: castle within the first ten moves unless you have a concrete reason not to. A king in the centre is the single most common cause of a lost opening.",
+  },
+  {
+    id: "castle-illegal",
+    title: "Castling: when you're not allowed",
+    tactic: "Defense",
+    intro:
+      "Castling has three restrictions people forget: you cannot castle out of check, through a square the enemy attacks, or into check. Here the bishop on a6 rakes the f1 square — so the king may not cross it. Find another way to get safe.",
+    position: pos({
+      e1: "wk", h1: "wr", f2: "wp", g2: "wp", h2: "wp",
+      a6: "bb", e8: "bk", a8: "br", h7: "bp",
+    }),
+    context: canCastle(),
+    steps: [
+      {
+        task: "Castling is unavailable. Block the bishop's diagonal instead.",
+        accept: [mv("h1", "f1"), mv("e1", "d1"), mv("e1", "d2")],
+        reply: mv("h7", "h6"),
+        explain:
+          "Right — Rf1 blocks the diagonal (and next move you could still castle if the king were free), while a king step also solves the immediate problem. Notice the engine never offered you g1: the rule is enforced, not suggested.",
+        hint: {
+          text: "The bishop attacks f1 through the empty diagonal — put something on f1, or move the king.",
+          arrow: mv("h1", "f1"),
+        },
+      },
+    ],
+    outro:
+      "The three restrictions in one line: not out of check, not through check, not into check. The square the *rook* crosses doesn't matter — only the king's path.",
+  },
+  {
+    id: "greek-gift",
+    title: "The Greek Gift sacrifice",
+    tactic: "Offense",
+    intro:
+      "The classic attack on a castled king. Black has castled kingside and played ...h6 loosely; your bishop, knight and queen are all trained on that corner. Give up the bishop to rip the king's cover open.",
+    position: pos({
+      g1: "wk", d3: "wb", f3: "wn", d1: "wq", e5: "wp", d4: "wp",
+      g8: "bk", f8: "br", f7: "bp", g7: "bp", h7: "bp", d5: "bp", a7: "bp",
+    }),
+    steps: [
+      {
+        task: "Sacrifice the bishop on h7.",
+        accept: [mv("d3", "h7")],
+        reply: mv("g8", "h7"),
+        explain:
+          "Bxh7+! The king must take — and now it stands on h7 with no pawn cover at all.",
+        hint: { text: "The bishop takes on h7, with check.", arrow: mv("d3", "h7") },
+        traps: [
+          {
+            to: rc("g5"),
+            text: "The knight jump comes second, not first. Without Bxh7+ dragging the king out, Ng5 just gets chased away by ...h6.",
+          },
+        ],
+      },
+      {
+        task: "Bring the knight in with check.",
+        accept: [mv("f3", "g5")],
+        reply: mv("h7", "g8"),
+        explain:
+          "Ng5+ — the king scurries back, but the damage is done: the h-file is wide open and the pawn shelter is gone.",
+        hint: { text: "Knight to g5, hitting the king again.", arrow: mv("f3", "g5") },
+      },
+      {
+        task: "Bring the queen to the open h-file.",
+        accept: [mv("d1", "h5")],
+        reply: null,
+        explain:
+          "Qh5 and Black cannot meet the threat of Qh7#. Bishop, knight, queen — the Greek Gift is three moves and hundreds of years old.",
+        hint: { text: "Queen swings to h5, threatening mate on h7.", arrow: mv("d1", "h5") },
+      },
+    ],
+    outro:
+      "The pattern needs three things: a bishop aimed at h7, a knight ready for g5, and a queen that can reach the h-file. Defensively — that's exactly what to look for before you weaken your own castled position.",
+  },
+  {
+    id: "opposite-castling",
+    title: "Opposite-side castling: storm the king",
+    tactic: "Strategy",
+    intro:
+      "You castled queenside, Black castled kingside. When the kings live on opposite wings, the game becomes a race: push the pawns in front of the *enemy* king, because they no longer shelter yours.",
+    position: pos({
+      c1: "wk", d1: "wr", a2: "wp", b2: "wp", c2: "wp", g2: "wp", h2: "wp", e4: "wp",
+      g8: "bk", f8: "br", f7: "bp", g7: "bp", h7: "bp", e5: "bp", a7: "bp",
+    }),
+    steps: [
+      {
+        task: "Start the pawn storm against Black's king.",
+        accept: [mv("h2", "h4"), mv("g2", "g4")],
+        reply: mv("a7", "a6"),
+        explain:
+          "h4! This pawn costs you nothing in safety — your king is on the other side of the board. Every square it advances pries open a file toward g8.",
+        hint: {
+          text: "Push a pawn on the side where the enemy king is sitting.",
+          arrow: mv("h2", "h4"),
+        },
+        traps: [
+          {
+            to: rc("c4"),
+            text: "That pawn shelters your own king. Advancing it opens lines toward yourself — storm with the pawns far from your king, not the ones in front of it.",
+          },
+        ],
+      },
+      {
+        task: "Keep the pawn rolling.",
+        accept: [mv("h4", "h5"), mv("g2", "g4")],
+        reply: null,
+        explain:
+          "h5 next, then h6 — Black must either take (opening the h-file for your rook) or watch the pawn crash through. In opposite-castling positions, speed beats material: the attack that lands first wins.",
+        hint: { text: "Push it again.", arrow: mv("h4", "h5") },
+      },
+    ],
+    outro:
+      "Same-side castling? Do the opposite — keep your pawns home and manoeuvre pieces. The pawns in front of your own king are armour, not ammunition.",
+  },
+  {
+    id: "connect-rooks",
+    title: "Castling connects the rooks",
+    tactic: "Strategy",
+    intro:
+      "Development isn't finished when the minor pieces are out — it's finished when the rooks can see each other. Castling is the move that does it, because it tucks the king aside and lets the rooks defend one another along the back rank.",
+    position: pos({
+      e1: "wk", a1: "wr", h1: "wr", f4: "wb", d2: "wq", c3: "wn", f3: "wn",
+      e4: "wp", d4: "wp", a2: "wp", f2: "wp", g2: "wp", h2: "wp",
+      e8: "bk", h8: "br", e5: "bp", a7: "bp",
+    }),
+    context: canCastle(),
+    steps: [
+      {
+        task: "Finish development — castle.",
+        accept: [mv("e1", "g1"), mv("e1", "c1")],
+        reply: mv("a7", "a6"),
+        explain:
+          "Castled. Both rooks now stand on the back rank with nothing between them — each defends the other, and either can swing to an open file.",
+        hint: { text: "Either side works here; O-O is the safer square.", arrow: mv("e1", "g1") },
+      },
+      {
+        task: "Put a rook where it will matter — the open or half-open central file.",
+        accept: [mv("a1", "d1"), mv("a1", "e1"), mv("f1", "e1")],
+        reply: null,
+        explain:
+          "Rooks belong on open files and behind pawns. That's the whole point of connecting them: now moving one doesn't hang the other.",
+        hint: { text: "Bring the spare rook toward the centre.", arrow: mv("a1", "d1") },
+      },
+    ],
+    outro:
+      "Checklist for a finished opening: pawns in the centre, minor pieces out, king castled, rooks connected and pointing at open files.",
+  },
+  {
+    id: "en-passant-rule",
+    title: "En passant: the rule",
+    tactic: "Opening",
+    intro:
+      "Black has just played ...d7-d5, sprinting two squares to slip past your pawn on e5. The en-passant rule stops that trick: you may capture the pawn as if it had only moved one square — but only on this very move.",
+    position: pos({ e5: "wp", d5: "bp", g1: "wk", g8: "bk", h7: "bp" }),
+    context: epAt("d6"),
+    steps: [
+      {
+        task: "Capture the pawn in passing — take on d6.",
+        accept: [mv("e5", "d6")],
+        reply: mv("h7", "h6"),
+        explain:
+          "exd6 e.p.! Your pawn lands on d6 and the black pawn vanishes from d5 — the one capture in chess where you don't finish on the captured piece's square.",
+        hint: {
+          text: "Your pawn captures diagonally onto the empty d6 square.",
+          arrow: mv("e5", "d6"),
+        },
+        traps: [
+          {
+            to: rc("e6"),
+            text: "Pushing past keeps the pawns locked and lets the d5 pawn live. The en-passant capture is offered for one move only — use it or lose it.",
+          },
+        ],
+      },
+    ],
+    outro:
+      "Three conditions: your pawn is on its fifth rank, an enemy pawn beside it has just double-stepped, and you capture *immediately*. Wait a move and the right is gone forever.",
+  },
+  {
+    id: "en-passant-tactic",
+    title: "En passant as a weapon",
+    tactic: "Offense",
+    intro:
+      "En passant isn't only a rule to remember — it's a tactic. Black just played ...f7-f5, hoping to blunt your attack by keeping the position closed. Open it back up.",
+    position: pos({
+      e5: "wp", f5: "bp", d1: "wr", h1: "wk",
+      g8: "bk", g7: "bp", h7: "bp", f8: "br", a7: "bp",
+    }),
+    context: epAt("f6"),
+    steps: [
+      {
+        task: "Punish the pawn advance — capture en passant.",
+        accept: [mv("e5", "f6")],
+        reply: mv("g7", "f6"),
+        explain:
+          "exf6 e.p.! Black had to recapture with the g-pawn, and look what happened to that king: the pawn shelter is shattered and the g-file is open.",
+        hint: { text: "Take on f6 in passing.", arrow: mv("e5", "f6") },
+      },
+      {
+        task: "Occupy the file you just opened.",
+        accept: [mv("d1", "g1")],
+        reply: null,
+        explain:
+          "Rg1! Black's g-pawn was dragged off to f6, so the g-file is wide open and the rook stares straight at the king. A pawn advance that looked defensive became the weakness that lost the game.",
+        hint: { text: "The g-file has no pawn on it any more.", arrow: mv("d1", "g1") },
+      },
+    ],
+    outro:
+      "Whenever an enemy pawn double-steps past yours, stop and ask what the capture would open. Often the file it exposes is worth more than the pawn.",
   },
   {
     id: "keysquares",
