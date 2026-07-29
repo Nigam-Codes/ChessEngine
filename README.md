@@ -67,6 +67,27 @@ The coaching logic lives in `src/coach.js` — small, readable functions
 (`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
 same move generator the engine uses.
 
+## 2-player mode
+
+The **👥 2 Players** tab turns the app into a shared board for two people on
+one device. The board auto-flips after each move so whoever is on move sees
+their own pieces at the bottom (toggle it off for a screen sitting flat
+between you), undo takes back a single ply, and the engine never runs — it
+stays idle until you ask for the review.
+
+Because the habit tracker is a personal profile, it is **paused** during
+2-player games: your opponent's blunders never land in your lifetime stats.
+Live coaching is off too, so nothing interrupts the game.
+
+Instead, all the coaching arrives at the end. Press **Coach the game** and the
+worker grades every ply, then builds a separate report for each colour:
+
+- accuracy, and a breakdown of best / good / inaccuracy / mistake / blunder;
+- the three moves that cost the most, each spelled out — *"Move 14: you played
+  Qxd5, better was Nf3 (−3.2)"*;
+- the habits that showed up in that player's moves, with the advice for each,
+  so both players leave with something specific to work on.
+
 ## Learn mode
 
 The **Learn** tab holds "select and play" tutorials: real positions where

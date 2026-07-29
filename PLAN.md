@@ -40,6 +40,13 @@ needed** section and mark your choices.
 | Post Game Review (v1) | Accuracy % (from graded moves), best/good/inaccuracy/mistake/blunder counts, evaluation graph, top-3 critical moments |
 | Learn-mode categories | Drill browser filters: Offense / Defense / Opening / Endgame |
 
+### Added since
+
+| Spec item | What was built |
+|---|---|
+| 2-player mode (local) | **👥 2 Players** tab: hot-seat play on one device, auto-flipping board with a toggle, single-ply undo, engine idle throughout. Habit tracking paused so a shared game never pollutes a personal profile. |
+| Post-game coaching, per player | **Coach the game** batch-grades every ply in the worker and produces a separate report per colour — accuracy, quality breakdown, the three costliest moves with the better move named, and habit-based lessons. Pure logic in `src/review.js`, unit-tested. |
+
 ---
 
 ## 2. Feasible next, no decisions needed
@@ -74,7 +81,7 @@ noted; pick a direction and the work can be scheduled.
 | # | Topic | The decision | Notes |
 |---|---|---|---|
 | D1 | **Stockfish vs. custom engine** | Swap the teaching engine for stockfish.wasm, keep the custom minimax, or run both (Stockfish for analysis, custom for teaching)? | Stockfish gives GM strength + accurate analysis, but the current engine is the *teaching artifact* — readable, explainable, and its telemetry panels are the app's identity. Both-at-once is the spec's intent ("Stockfish as the analysis engine") and is feasible (~1.5 MB wasm, still client-only). **Recommended: both.** |
-| D2 | **Accounts & data** | Stay 100% local (localStorage), or add a backend (accounts, database, sync)? | Everything in the spec's analytics/goals/reports sections is buildable locally, but data dies with the browser. A backend means auth, hosting costs, and a database schema — a different project category. **Recommended: local-first now, export/import JSON as a bridge.** |
+| D2 | **Accounts & data / online play** | Stay 100% local (localStorage), or add a backend (accounts, database, sync, **online 2-player**)? | Everything in the spec's analytics/goals/reports sections is buildable locally, but data dies with the browser. Local hot-seat 2-player already ships; playing someone on *another device* is what needs the backend. **Recommended: local-first now, export/import JSON as a bridge.** |
 | D3 | **Rated mode & rating numbers** | Implement a local Elo estimate (vs. engine levels), or integrate with a real rating ecosystem? | A local rating is easy and motivating but not comparable to FIDE/chess.com. Goals like "Reach 1200" need *some* rating definition. |
 | D4 | **Time controls** | Add clocks (bullet→classical)? Needs pause/resume, flagging, and a decision on whether the engine's think time counts. | Straightforward UI work; decide if losing on time is wanted in a *learning* app. |
 | D5 | **10 difficulty levels** | Expand 6 → 10 named levels (Beginner → Super GM → Max)? | Above depth 6 the custom engine gets slow; levels 7–10 realistically require D1 (Stockfish). Depth alone won't reach GM strength. |

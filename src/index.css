@@ -705,6 +705,19 @@ button {
   font-size: 0.86rem;
 }
 
+.review-critical li { margin-bottom: 0.3rem; }
+
+.review-lessons {
+  margin: 0;
+  padding-left: 1.2rem;
+  font-size: 0.86rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.review-lessons strong { color: var(--text); }
+
 /* ---- Arrows ---- */
 
 .arrow-layer {

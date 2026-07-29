@@ -14,6 +14,7 @@ import {
 } from "./engine.js";
 import LearnMode from "./LearnMode.jsx";
 import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
+import { summarize, topMistakes, habitReport, criticalMoments } from "./review.js";
 import { LESSONS } from "./lessons.js";
 import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
 import ArrowLayer from "./Arrows.jsx";
@@ -32,13 +33,22 @@ const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthl
 // Probability the engine plays a near-best candidate instead of the best.
 const FUZZ_BY_DEPTH = [0, 0.6, 0.3, 0, 0, 0, 0];
 
-function statusText(status, turn, thinking, playerColor) {
+const COLOR_NAME = { w: "White", b: "Black" };
+
+function statusText(status, turn, thinking, playerColor, vsHuman) {
+  // `turn` is the side to move — and when the game is over, the side that has
+  // no moves left, i.e. the loser.
   if (status === "checkmate") {
-    // `turn` is the side that has no moves left.
+    if (vsHuman) return `Checkmate — ${COLOR_NAME[opposite(turn)]} wins!`;
     return turn !== playerColor ? "Checkmate — you win!" : "Checkmate — the engine wins.";
   }
   if (status === "stalemate") return "Stalemate — draw.";
   if (thinking) return "Engine is thinking…";
+  if (vsHuman) {
+    return status === "check"
+      ? `Check! ${COLOR_NAME[turn]} to move.`
+      : `${COLOR_NAME[turn]} to move.`;
+  }
   if (status === "check") return "Check! Your move.";
   return "Your move.";
 }
@@ -54,6 +64,7 @@ function formatScore(cp) {
 
 export default function ChessEngineLab() {
   const [mode, setMode] = useState("play"); // "play" | "learn"
+  const [opponent, setOpponent] = useState("engine"); // "engine" | "human"
   const [playerColor, setPlayerColor] = useState(WHITE);
   const [board, setBoard] = useState(initialBoard);
   const [turn, setTurn] = useState(WHITE);
@@ -75,6 +86,14 @@ export default function ChessEngineLab() {
   // Board display options.
   const [flipped, setFlipped] = useState(false);
   const [blindfold, setBlindfold] = useState(false);
+  // Hot-seat: rotate the board so the side to move sees their own pieces.
+  const [autoFlip, setAutoFlip] = useState(true);
+  // Every ply of this game, captured before the move was applied. This is the
+  // input for the post-game coach report (and, later, PGN export).
+  const [plyLog, setPlyLog] = useState([]);
+  const [reviewGrades, setReviewGrades] = useState(null);
+  const [reviewProgress, setReviewProgress] = useState(null);
+  const [reviewColor, setReviewColor] = useState(WHITE); // which report is shown
   // User-drawn annotations (chess.com style): right-click-drag an arrow,
   // right-click a square to highlight it, left-click to clear everything.
   // The ✏️ Draw toggle lets touch screens draw with a plain drag.
@@ -105,6 +124,10 @@ export default function ChessEngineLab() {
   const yourMovesRef = useRef([]);
 
   const engineColor = opposite(playerColor);
+  const vsHuman = opponent === "human";
+  // The side the person at the keyboard may move right now. Against the engine
+  // that's always your colour; in hot-seat it's simply whoever is on move.
+  const controlledColor = vsHuman ? turn : playerColor;
 
   const recordHabitEvents = useCallback((events) => {
     if (!events || events.length === 0) return;
@@ -143,6 +166,15 @@ export default function ChessEngineLab() {
         setHintLoading(false);
         setHint(msg.result.move ? msg.result : null);
         setHintLevel(msg.result.move ? 1 : 0);
+        return;
+      }
+      if (msg.type === "review-progress") {
+        setReviewProgress({ done: msg.done, total: msg.total });
+        return;
+      }
+      if (msg.type === "review-done") {
+        setReviewProgress(null);
+        setReviewGrades(msg.grades);
         return;
       }
       const result = msg.reply;
@@ -187,10 +219,10 @@ export default function ChessEngineLab() {
   // Legal moves for the currently selected piece.
   const targets = useMemo(() => {
     if (!selected) return [];
-    return legalMoves(board, playerColor).filter(
+    return legalMoves(board, controlledColor).filter(
       (m) => m.fromR === selected.r && m.fromC === selected.c
     );
-  }, [board, selected, playerColor]);
+  }, [board, selected, controlledColor]);
 
   const gameOver = status === "checkmate" || status === "stalemate";
 
@@ -201,7 +233,7 @@ export default function ChessEngineLab() {
       setUserArrows([]);
       setUserHighlights([]);
     }
-    if (thinking || gameOver || turn !== playerColor) return;
+    if (thinking || gameOver || turn !== controlledColor) return;
 
     const move = targets.find((m) => m.toR === r && m.toC === c);
     if (move) {
@@ -209,25 +241,32 @@ export default function ChessEngineLab() {
         ...p,
         {
           board, lastMove, telemetry, status, history, coachReport, threats,
-          evalHistory, gradeLog,
+          evalHistory, gradeLog, turn,
           yourMoves: yourMovesRef.current,
         },
       ]);
       const next = applyMove(board, move);
-      const newStatus = getGameStatus(next, engineColor);
-      // Habit detection compares the position before and after your move.
-      // Undone moves stay counted — the habit still happened.
-      recordHabitEvents(
-        analyzeMove({
-          prevBoard: board,
-          nextBoard: next,
-          move,
-          moveNumber: yourMovesRef.current.length + 1,
-          previousMoves: yourMovesRef.current,
-          color: playerColor,
-        })
-      );
-      yourMovesRef.current = [...yourMovesRef.current, move];
+      const newStatus = getGameStatus(next, opposite(turn));
+      // Record the ply for the post-game report, capturing the position it was
+      // played in so the review can grade it exactly as it happened.
+      setPlyLog((p) => [...p, { board, played: move, color: turn }]);
+      // Habit tracking is a personal profile — pause it in hot-seat so an
+      // opponent's blunders never land in your lifetime stats.
+      if (!vsHuman) {
+        // Habit detection compares the position before and after your move.
+        // Undone moves stay counted — the habit still happened.
+        recordHabitEvents(
+          analyzeMove({
+            prevBoard: board,
+            nextBoard: next,
+            move,
+            moveNumber: yourMovesRef.current.length + 1,
+            previousMoves: yourMovesRef.current,
+            color: playerColor,
+          })
+        );
+        yourMovesRef.current = [...yourMovesRef.current, move];
+      }
       setBoard(next);
       setSelected(null);
       setLastMove(move);
@@ -242,11 +281,17 @@ export default function ChessEngineLab() {
         moveToString(move) +
           (newStatus === "checkmate" ? "#" : newStatus === "check" ? "+" : ""),
       ]);
+      // Hand the turn over first, even when the game just ended: `turn` always
+      // means "side to move", so on checkmate it names the player who has no
+      // reply — which is what the status line reads to announce the winner.
+      setTurn(opposite(turn));
       if (newStatus === "checkmate" || newStatus === "stalemate") {
-        recordGameEnd();
+        if (!vsHuman) recordGameEnd();
         return;
       }
-      setTurn(engineColor);
+      // Hot-seat: the other player is sitting right here, so there is nobody to
+      // search for — the worker stays idle until the post-game review.
+      if (vsHuman) return;
       setThinking(true);
       workerRef.current.postMessage({
         type: "move",
@@ -264,7 +309,7 @@ export default function ChessEngineLab() {
     }
 
     const piece = board[r][c];
-    if (piece && piece[0] === playerColor) {
+    if (piece && piece[0] === controlledColor) {
       setSelected(selected && selected.r === r && selected.c === c ? null : { r, c });
     } else {
       setSelected(null);
@@ -326,14 +371,25 @@ export default function ChessEngineLab() {
     setHint(null);
     setHintLevel(0);
     setHintLoading(false);
-    setTurn(playerColor);
+    // Vs the engine a snapshot covers a full move pair, so the turn always
+    // comes back to you. In hot-seat every ply is snapshotted, so hand the
+    // turn back to whoever played the move being taken back.
+    setTurn(vsHuman ? prev.turn : playerColor);
+    setPlyLog((p) => p.slice(0, -1));
+    setReviewGrades(null);
     setSelected(null);
     setThinking(false);
     yourMovesRef.current = prev.yourMoves;
   };
 
-  /** Start a fresh game with you playing `color`. */
-  const newGame = (color) => {
+  /**
+   * Start a fresh game with you playing `color`. `nextOpponent` is passed
+   * explicitly when switching modes, because the `opponent` state hasn't
+   * re-rendered yet at that point.
+   */
+  const newGame = (color, nextOpponent = opponent) => {
+    const humanOpponent = nextOpponent === "human";
+    setOpponent(nextOpponent);
     // A search may be mid-flight; kill the worker so its result never lands.
     workerRef.current?.terminate();
     const worker = makeWorker();
@@ -361,9 +417,13 @@ export default function ChessEngineLab() {
     setUserArrows([]);
     setUserHighlights([]);
     setPreviewArrow(null);
+    setPlyLog([]);
+    setReviewGrades(null);
+    setReviewProgress(null);
+    setReviewColor(WHITE);
     drawStartRef.current = null;
     yourMovesRef.current = [];
-    if (color === BLACK) {
+    if (color === BLACK && !humanOpponent) {
       // You chose Black, so the engine opens the game as White.
       setThinking(true);
       worker.postMessage({
@@ -380,6 +440,17 @@ export default function ChessEngineLab() {
   };
 
   const reset = () => newGame(playerColor);
+
+  /** Batch-grade every ply of the finished game for the per-colour report. */
+  const requestReview = () => {
+    if (reviewProgress || plyLog.length === 0) return;
+    setReviewProgress({ done: 0, total: plyLog.length });
+    workerRef.current.postMessage({
+      type: "review",
+      plies: plyLog,
+      depth: coachDepth,
+    });
+  };
 
   const resetHabits = () => {
     clearHabitStats();
@@ -435,8 +506,12 @@ export default function ChessEngineLab() {
 
   // Arrows drawn on the live board in teacher mode: red = threats aimed at
   // you, green = the hint move, blue = the engine's last move.
-  // Board orientation: your side at the bottom, unless manually flipped.
-  const orientBlack = (playerColor === BLACK) !== flipped;
+  // Board orientation: the side that "owns" the bottom of the board. Against
+  // the engine that's your colour; in hot-seat with auto-flip it follows the
+  // side to move, so each player sees their own pieces nearest them. The manual
+  // Flip button XORs on top of either.
+  const bottomColor = vsHuman ? (autoFlip ? turn : WHITE) : playerColor;
+  const orientBlack = (bottomColor === BLACK) !== flipped;
 
   const boardArrows = useMemo(() => {
     if (!teacherMode) return [];
@@ -548,34 +623,27 @@ export default function ChessEngineLab() {
     return "Which of your pieces is least active, and can you improve it?";
   }, [threats, lastMove]);
 
-  // Post-game review: verdict counts, accuracy, and the biggest swings.
+  // Post-game review (vs engine): verdict counts, accuracy, biggest swings.
   const review = useMemo(() => {
     if (!gameOver) return null;
-    const counts = { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0 };
-    let totalLoss = 0;
-    for (const g of gradeLog) {
-      totalLoss += Math.max(0, g.loss);
-      if (g.loss <= 20) counts.best++;
-      else if (g.loss <= 60) counts.good++;
-      else if (g.loss <= 150) counts.inaccuracy++;
-      else if (g.loss <= 400) counts.mistake++;
-      else counts.blunder++;
-    }
-    const avgLoss = gradeLog.length ? totalLoss / gradeLog.length : null;
-    const accuracy =
-      avgLoss == null ? null : Math.max(0, Math.min(100, Math.round(100 - avgLoss / 6)));
-    // Critical moments: the largest eval swings between consecutive plies.
-    const swings = [];
-    for (let i = 1; i < evalHistory.length; i++) {
-      const delta = evalHistory[i] - evalHistory[i - 1];
-      swings.push({ ply: i, delta });
-    }
-    const critical = swings
-      .filter((s) => Math.abs(s.delta) >= 150)
-      .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-      .slice(0, 3);
-    return { counts, accuracy, critical, graded: gradeLog.length };
+    return {
+      ...summarize(gradeLog),
+      critical: criticalMoments(evalHistory),
+    };
   }, [gameOver, gradeLog, evalHistory]);
+
+  // Post-game coach report (hot-seat): one per colour, built from the batch
+  // analysis plus a read-only replay of the habit detector.
+  const coachReports = useMemo(() => {
+    if (!reviewGrades) return null;
+    const build = (color) => ({
+      color,
+      ...summarize(reviewGrades, color),
+      mistakes: topMistakes(reviewGrades, color),
+      ...habitReport(plyLog, color),
+    });
+    return { w: build(WHITE), b: build(BLACK), critical: criticalMoments(evalHistory) };
+  }, [reviewGrades, plyLog, evalHistory]);
 
   // Which bad habit needs the most work, for the "Focus" advice line.
   const worstHabit = useMemo(() => {
@@ -601,12 +669,26 @@ export default function ChessEngineLab() {
 
       <div className="mode-tabs" role="tablist" aria-label="Mode">
         <button
-          className={"mode-tab" + (mode === "play" ? " active" : "")}
+          className={"mode-tab" + (mode === "play" && !vsHuman ? " active" : "")}
           role="tab"
-          aria-selected={mode === "play"}
-          onClick={() => setMode("play")}
+          aria-selected={mode === "play" && !vsHuman}
+          onClick={() => {
+            setMode("play");
+            if (vsHuman) newGame(WHITE, "engine");
+          }}
         >
           ♟ Play
+        </button>
+        <button
+          className={"mode-tab" + (mode === "play" && vsHuman ? " active" : "")}
+          role="tab"
+          aria-selected={mode === "play" && vsHuman}
+          onClick={() => {
+            setMode("play");
+            if (!vsHuman) newGame(WHITE, "human");
+          }}
+        >
+          👥 2 Players
         </button>
         <button
           className={"mode-tab" + (mode === "learn" ? " active" : "")}
@@ -626,7 +708,7 @@ export default function ChessEngineLab() {
         <section className="board-column" aria-label="Chess board">
           <div className={"status" + (status === "check" ? " status-check" : "")}
                role="status" aria-live="polite">
-            {statusText(status, turn, thinking, playerColor)}
+            {statusText(status, turn, thinking, playerColor, vsHuman)}
             {thinking && <span className="spinner" aria-hidden="true" />}
           </div>
 
@@ -695,25 +777,31 @@ export default function ChessEngineLab() {
           )}
 
           <div className="controls">
-            <label className="strength">
-              <span>
-                Engine strength: <strong>{STRENGTH_LABELS[depth - 1]}</strong>{" "}
-                <span className="muted">(depth {depth})</span>
-              </span>
-              <input
-                type="range"
-                min="1"
-                max="6"
-                value={depth}
-                onChange={(e) => setDepth(Number(e.target.value))}
-                aria-label="Engine strength, search depth 1 to 6"
-              />
-            </label>
+            {!vsHuman && (
+              <label className="strength">
+                <span>
+                  Engine strength: <strong>{STRENGTH_LABELS[depth - 1]}</strong>{" "}
+                  <span className="muted">(depth {depth})</span>
+                </span>
+                <input
+                  type="range"
+                  min="1"
+                  max="6"
+                  value={depth}
+                  onChange={(e) => setDepth(Number(e.target.value))}
+                  aria-label="Engine strength, search depth 1 to 6"
+                />
+              </label>
+            )}
             <button
               className="reset"
               onClick={undo}
               disabled={past.length === 0}
-              title="Take back your last move and the engine's reply"
+              title={
+                vsHuman
+                  ? "Take back the last move"
+                  : "Take back your last move and the engine's reply"
+              }
             >
               Undo move
             </button>
@@ -729,33 +817,50 @@ export default function ChessEngineLab() {
             >
               ✏️ Draw
             </button>
-            <div className="side-picker" role="group" aria-label="Choose your side (starts a new game)">
-              <span className="muted small">You play</span>
-              <button
-                className={"chip" + (playerColor === WHITE ? " chip-active" : "")}
-                onClick={() => playerColor !== WHITE && newGame(WHITE)}
-                aria-pressed={playerColor === WHITE}
-                title="Play White (starts a new game)"
+            {!vsHuman && (
+              <div className="side-picker" role="group" aria-label="Choose your side (starts a new game)">
+                <span className="muted small">You play</span>
+                <button
+                  className={"chip" + (playerColor === WHITE ? " chip-active" : "")}
+                  onClick={() => playerColor !== WHITE && newGame(WHITE)}
+                  aria-pressed={playerColor === WHITE}
+                  title="Play White (starts a new game)"
+                >
+                  ♔ White
+                </button>
+                <button
+                  className={"chip" + (playerColor === BLACK ? " chip-active" : "")}
+                  onClick={() => playerColor !== BLACK && newGame(BLACK)}
+                  aria-pressed={playerColor === BLACK}
+                  title="Play Black (starts a new game)"
+                >
+                  ♚ Black
+                </button>
+              </div>
+            )}
+            {vsHuman && (
+              <label
+                className="teacher-toggle"
+                title="Rotate the board after each move so the player to move sees their own pieces at the bottom"
               >
-                ♔ White
-              </button>
-              <button
-                className={"chip" + (playerColor === BLACK ? " chip-active" : "")}
-                onClick={() => playerColor !== BLACK && newGame(BLACK)}
-                aria-pressed={playerColor === BLACK}
-                title="Play Black (starts a new game)"
-              >
-                ♚ Black
-              </button>
-            </div>
-            <label className="teacher-toggle">
-              <input
-                type="checkbox"
-                checked={teacherMode}
-                onChange={(e) => setTeacherMode(e.target.checked)}
-              />
-              <span>Teacher mode</span>
-            </label>
+                <input
+                  type="checkbox"
+                  checked={autoFlip}
+                  onChange={(e) => setAutoFlip(e.target.checked)}
+                />
+                <span>Auto-flip</span>
+              </label>
+            )}
+            {!vsHuman && (
+              <label className="teacher-toggle">
+                <input
+                  type="checkbox"
+                  checked={teacherMode}
+                  onChange={(e) => setTeacherMode(e.target.checked)}
+                />
+                <span>Teacher mode</span>
+              </label>
+            )}
             <label className="teacher-toggle" title="Hide the pieces and play from the move list — the classic visualization exercise">
               <input
                 type="checkbox"
@@ -768,11 +873,149 @@ export default function ChessEngineLab() {
         </section>
 
         <aside className="panel-column">
-          {review && (
+          {vsHuman && gameOver && (
+            <section className="panel panel-review" aria-label="Coach report">
+              <h2>Coach report</h2>
+              <p className="review-result">
+                {statusText(status, turn, false, playerColor, true)}
+              </p>
+              {!coachReports && (
+                <>
+                  <p className="muted small">
+                    Analyze the whole game and get separate feedback for each
+                    player — accuracy, the moves that cost the most, and the
+                    habits to work on.
+                  </p>
+                  <button
+                    className="reset"
+                    onClick={requestReview}
+                    disabled={!!reviewProgress || plyLog.length === 0}
+                  >
+                    {reviewProgress ? "Analyzing…" : "Coach the game"}
+                  </button>
+                  {reviewProgress && (
+                    <p className="muted small" role="status" aria-live="polite">
+                      Analyzing move {reviewProgress.done} of {reviewProgress.total}…
+                    </p>
+                  )}
+                </>
+              )}
+
+              {coachReports && (
+                <>
+                  <div className="drill-nav" role="group" aria-label="Whose report to show">
+                    {[WHITE, BLACK].map((col) => (
+                      <button
+                        key={col}
+                        className={"chip" + (reviewColor === col ? " chip-active" : "")}
+                        onClick={() => setReviewColor(col)}
+                        aria-pressed={reviewColor === col}
+                      >
+                        {col === WHITE ? "♔ White" : "♚ Black"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {(() => {
+                    const rep = coachReports[reviewColor];
+                    return (
+                      <>
+                        <p>
+                          {COLOR_NAME[reviewColor]} accuracy:{" "}
+                          <strong>{rep.accuracy != null ? `${rep.accuracy}%` : "—"}</strong>{" "}
+                          <span className="muted small">({rep.graded} moves)</span>
+                        </p>
+                        <p className="review-counts">
+                          <span className="rc rc-good">{rep.counts.best} best</span>
+                          <span className="rc rc-good">{rep.counts.good} good</span>
+                          <span className="rc rc-warn">{rep.counts.inaccuracy} inaccuracies</span>
+                          <span className="rc rc-bad">{rep.counts.mistake} mistakes</span>
+                          <span className="rc rc-bad">{rep.counts.blunder} blunders</span>
+                        </p>
+
+                        <h3 className="review-h3">Biggest mistakes</h3>
+                        {rep.mistakes.length === 0 ? (
+                          <p className="muted small">
+                            Nothing serious — no move cost more than half a pawn.
+                          </p>
+                        ) : (
+                          <ul className="review-critical">
+                            {rep.mistakes.map((m) => (
+                              <li key={m.ply}>
+                                <span className={`badge badge-${m.tone}`}>{m.verdict}</span>{" "}
+                                Move {m.moveNumber}: you played <strong>{m.playedStr}</strong>,
+                                better was <strong>{m.bestStr}</strong>{" "}
+                                <span className="muted">(−{(m.loss / 100).toFixed(1)})</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <h3 className="review-h3">Work on this</h3>
+                        {rep.lessons.length === 0 ? (
+                          <p className="muted small">
+                            No recurring bad habits showed up this game — well played.
+                          </p>
+                        ) : (
+                          <ul className="review-lessons">
+                            {rep.lessons.slice(0, 3).map((l) => (
+                              <li key={l.id}>
+                                <strong>{l.label}</strong> ×{l.count} — {l.advice}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {rep.strengths.length > 0 && (
+                          <p className="muted small">
+                            Good habits seen: {rep.strengths.map((s) => s.label).join(", ")}.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+
+                  {coachReports.critical.length > 0 && (
+                    <>
+                      <h3 className="review-h3">Critical moments</h3>
+                      <ul className="review-critical">
+                        {coachReports.critical.map((s) => (
+                          <li key={s.ply}>
+                            Move {Math.floor(s.ply / 2) + 1} ({history[s.ply] || "—"}):{" "}
+                            {s.delta > 0 ? "+" : ""}{(s.delta / 100).toFixed(1)} swing
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </>
+              )}
+
+              {evalHistory.length > 1 && (
+                <svg className="eval-graph" viewBox="0 0 300 80" preserveAspectRatio="none"
+                     aria-label="Evaluation over the game">
+                  <line x1="0" y1="40" x2="300" y2="40" stroke="#4a5266" strokeWidth="1" strokeDasharray="4 4" />
+                  <polyline
+                    fill="none"
+                    stroke="#6ea8fe"
+                    strokeWidth="2"
+                    points={evalHistory
+                      .map((cp, i) => {
+                        const x = (i / (evalHistory.length - 1)) * 300;
+                        const y = 40 - Math.max(-38, Math.min(38, cp / 13));
+                        return `${x.toFixed(1)},${y.toFixed(1)}`;
+                      })
+                      .join(" ")}
+                  />
+                </svg>
+              )}
+            </section>
+          )}
+
+          {!vsHuman && review && (
             <section className="panel panel-review" aria-label="Game review">
               <h2>Game review</h2>
               <p className="review-result">
-                {statusText(status, turn, false, playerColor)}
+                {statusText(status, turn, false, playerColor, false)}
               </p>
               {review.accuracy != null ? (
                 <p>
@@ -831,7 +1074,7 @@ export default function ChessEngineLab() {
             </section>
           )}
 
-          {teacherMode && (
+          {teacherMode && !vsHuman && (
             <section className="panel panel-coach" aria-label="Coach">
               <h2>Coach</h2>
               {grading ? (
@@ -899,6 +1142,7 @@ export default function ChessEngineLab() {
             </section>
           )}
 
+          {!vsHuman && (
           <section className="panel" aria-label="Habit tracker">
             <h2>Habit tracker</h2>
             <p className="muted small">
@@ -943,7 +1187,9 @@ export default function ChessEngineLab() {
               Reset stats
             </button>
           </section>
+          )}
 
+          {!vsHuman && (
           <section className="panel" aria-label="Telemetry">
             <h2>Telemetry</h2>
             <div className="eval-bar" aria-label={`Evaluation ${formatScore(staticEval)} pawns`}>
@@ -972,7 +1218,9 @@ export default function ChessEngineLab() {
               </div>
             </dl>
           </section>
+          )}
 
+          {!vsHuman && (
           <section className="panel" aria-label="Why this move">
             <h2>Why this move?</h2>
             {telemetry && telemetry.candidates.length > 0 ? (
@@ -992,6 +1240,7 @@ export default function ChessEngineLab() {
               </p>
             )}
           </section>
+          )}
 
           <section className="panel" aria-label="Move list">
             <h2>Moves</h2>

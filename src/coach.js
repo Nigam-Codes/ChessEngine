@@ -170,12 +170,29 @@ export function findPins(board, color) {
  */
 export function classifyMove(bestScore, playedScore, color = WHITE) {
   // Scores are from White's perspective, so a Black player's loss is inverted.
-  const loss = color === WHITE ? bestScore - playedScore : playedScore - bestScore;
-  if (loss <= 20) return { verdict: "Excellent", tone: "good", loss };
-  if (loss <= 60) return { verdict: "Good move", tone: "good", loss };
-  if (loss <= 150) return { verdict: "Inaccuracy", tone: "warn", loss };
-  if (loss <= 400) return { verdict: "Mistake", tone: "bad", loss };
-  return { verdict: "Blunder", tone: "bad", loss };
+  return verdictForLoss(lossFor(bestScore, playedScore, color));
+}
+
+/**
+ * How many centipawns a move gave up, from the mover's point of view.
+ * Engine scores are always from White's perspective, so Black's loss is the
+ * inverse. Every grading path in the app funnels through this.
+ */
+export function lossFor(bestScore, playedScore, color = WHITE) {
+  return color === WHITE ? bestScore - playedScore : playedScore - bestScore;
+}
+
+/**
+ * The single source of truth for grade thresholds — used by live coaching
+ * (classifyMove), the habit tracker, and the post-game review, so a move can
+ * never be called a "Mistake" in one panel and an "Inaccuracy" in another.
+ */
+export function verdictForLoss(loss) {
+  if (loss <= 20) return { verdict: "Excellent", tone: "good", bucket: "best", loss };
+  if (loss <= 60) return { verdict: "Good move", tone: "good", bucket: "good", loss };
+  if (loss <= 150) return { verdict: "Inaccuracy", tone: "warn", bucket: "inaccuracy", loss };
+  if (loss <= 400) return { verdict: "Mistake", tone: "bad", bucket: "mistake", loss };
+  return { verdict: "Blunder", tone: "bad", bucket: "blunder", loss };
 }
 
 const pieceLabel = (piece) => PIECE_NAMES[piece[1]];
