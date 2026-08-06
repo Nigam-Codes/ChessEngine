@@ -93,6 +93,11 @@ export default function ChessEngineLab() {
   const [blindfold, setBlindfold] = useState(false);
   // Hot-seat: rotate the board so the side to move sees their own pieces.
   const [autoFlip, setAutoFlip] = useState(true);
+  // Where a new game starts from: the opening, or a generated practice position.
+  const [startMode, setStartMode] = useState("standard"); // standard|midgame|endgame
+  const [startDifficulty, setStartDifficulty] = useState("balanced");
+  const [scenario, setScenario] = useState(null); // { label, target } when random
+  const [settingUp, setSettingUp] = useState(false);
   // Every ply of this game, captured before the move was applied. This is the
   // input for the post-game coach report (and, later, PGN export).
   const [plyLog, setPlyLog] = useState([]);
@@ -175,6 +180,18 @@ export default function ChessEngineLab() {
         setHintLoading(false);
         setHint(msg.result.move ? msg.result : null);
         setHintLevel(msg.result.move ? 1 : 0);
+        return;
+      }
+      if (msg.type === "generate-done") {
+        const p = msg.position;
+        setSettingUp(false);
+        setBoard(p.board);
+        boardRef.current = p.board;
+        setCtx(p.ctx);
+        ctxRef.current = p.ctx;
+        setTurn(p.turn);
+        setScenario({ label: p.label, target: p.target });
+        setStatus(getGameStatus(p.board, p.turn, p.ctx));
         return;
       }
       if (msg.type === "review-progress") {
@@ -278,7 +295,10 @@ export default function ChessEngineLab() {
             prevBoard: board,
             nextBoard: next,
             move,
-            moveNumber: yourMovesRef.current.length + 1,
+            // From a random midgame/endgame there is no opening to judge, so
+            // push past the opening windows in analyzeMove rather than
+            // reporting "brought the queen out early" on move 30.
+            moveNumber: yourMovesRef.current.length + 1 + (scenario ? 50 : 0),
             previousMoves: yourMovesRef.current,
             color: playerColor,
           })
@@ -447,6 +467,24 @@ export default function ChessEngineLab() {
     setReviewColor(WHITE);
     drawStartRef.current = null;
     yourMovesRef.current = [];
+    // A random practice position replaces the opening. The generator runs in
+    // the worker (the midgame one plays a short opening against itself), so the
+    // board arrives via generate-done rather than synchronously here.
+    if (startMode !== "standard") {
+      setScenario(null);
+      setSettingUp(true);
+      setThinking(false);
+      worker.postMessage({
+        type: "generate",
+        phase: startMode,
+        difficulty: startDifficulty,
+        playerColor: color,
+        seed: (Math.random() * 2 ** 32) >>> 0,
+      });
+      return;
+    }
+    setScenario(null);
+
     if (color === BLACK && !humanOpponent) {
       // You chose Black, so the engine opens the game as White.
       setThinking(true);
@@ -772,9 +810,17 @@ export default function ChessEngineLab() {
         <section className="board-column" aria-label="Chess board">
           <div className={"status" + (status === "check" ? " status-check" : "")}
                role="status" aria-live="polite">
-            {statusText(status, turn, thinking, playerColor, vsHuman)}
-            {thinking && <span className="spinner" aria-hidden="true" />}
+            {settingUp
+              ? "Setting up a position…"
+              : statusText(status, turn, thinking, playerColor, vsHuman)}
+            {(thinking || settingUp) && <span className="spinner" aria-hidden="true" />}
           </div>
+
+          {scenario && (
+            <p className="scenario" role="status">
+              <strong>{scenario.label}</strong> — {scenario.target}
+            </p>
+          )}
 
           <div
             ref={boardElRef}
@@ -875,6 +921,42 @@ export default function ChessEngineLab() {
               Undo move
             </button>
             <button className="reset" onClick={reset}>New game</button>
+            <div className="start-picker" role="group" aria-label="Where a new game starts from">
+              <span className="muted small">Start from</span>
+              {[
+                ["standard", "Opening"],
+                ["midgame", "Random midgame"],
+                ["endgame", "Random endgame"],
+              ].map(([id, text]) => (
+                <button
+                  key={id}
+                  className={"chip" + (startMode === id ? " chip-active" : "")}
+                  onClick={() => setStartMode(id)}
+                  aria-pressed={startMode === id}
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+            {startMode !== "standard" && (
+              <div className="start-picker" role="group" aria-label="Practice difficulty">
+                <span className="muted small">Give me</span>
+                {[
+                  ["balanced", "An equal game"],
+                  ["convert", "A win to convert"],
+                  ["defend", "A loss to defend"],
+                ].map(([id, text]) => (
+                  <button
+                    key={id}
+                    className={"chip" + (startDifficulty === id ? " chip-active" : "")}
+                    onClick={() => setStartDifficulty(id)}
+                    aria-pressed={startDifficulty === id}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+            )}
             <button className="reset" onClick={() => setFlipped((f) => !f)} title="Rotate the board 180°">
               Flip board
             </button>

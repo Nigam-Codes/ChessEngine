@@ -272,4 +272,41 @@ test("castling reaches the search: the engine sees and scores it", () => {
   assert.ok(Number.isFinite(castleCandidate.score), "castling must get a real score");
 });
 
+/* ---------------- Tapered evaluation ---------------- */
+
+test("the king's best square flips between the opening and the endgame", () => {
+  // Bare king and pawn: the king is a fighting piece and belongs in the middle.
+  const cornerEnd = pos({ a1: "wk", d4: "wp", h8: "bk" });
+  const centreEnd = pos({ e4: "wk", d4: "wp", h8: "bk" });
+  assert.ok(
+    evaluate(centreEnd) > evaluate(cornerEnd),
+    `in an endgame a central king must score higher (centre ${evaluate(centreEnd)} vs corner ${evaluate(cornerEnd)})`
+  );
+
+  // Full opening material: now the king wants to be tucked away, not marching.
+  // Clear g1 and e1 in the shared base so the two variants differ *only* by
+  // where the king stands — otherwise this compares material, not placement.
+  const base = initialBoard();
+  base[7][4] = ""; // king leaves e1
+  base[7][6] = ""; // knight out of the way of g1
+  const tucked = cloneBoard(base);
+  tucked[7][6] = "wk"; // king on g1, as if castled
+  const exposed = cloneBoard(base);
+  exposed[4][4] = "wk"; // king wandering to e4
+  assert.ok(
+    evaluate(tucked) > evaluate(exposed),
+    `with a full board the sheltered king must score higher (g1 ${evaluate(tucked)} vs e4 ${evaluate(exposed)})`
+  );
+});
+
+test("tapered evaluation still counts material first", () => {
+  // Whatever the phase does to piece-square bonuses, a queen is a queen.
+  const withQueen = pos({ e1: "wk", d1: "wq", e8: "bk" });
+  const without = pos({ e1: "wk", e8: "bk" });
+  assert.ok(evaluate(withQueen) - evaluate(without) > 800, "a queen must be worth ~9 pawns");
+  // A symmetric position evaluates to dead level in any phase.
+  assert.equal(evaluate(pos({ e1: "wk", e8: "bk" })), 0);
+  assert.equal(evaluate(initialBoard()), 0);
+});
+
 console.log(`\n${passed} tests passed.`);

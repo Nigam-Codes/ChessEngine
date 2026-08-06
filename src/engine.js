@@ -456,12 +456,71 @@ const PST = {
 };
 
 /**
+ * Endgame piece-square tables.
+ *
+ * Two pieces change job completely once the queens come off:
+ *
+ *   - the KING stops hiding and becomes a fighting piece. The midgame table
+ *     above pays +30 for cowering on b1/g1 and −50 for the centre; in an
+ *     ending that is exactly backwards, and an engine using it will shuffle
+ *     in the corner while the enemy king walks in and eats its pawns.
+ *   - PAWNS become the whole game, so advancement is worth far more.
+ *
+ * Only these two need a second table; a knight or rook wants roughly the same
+ * squares in both phases, so they fall through to the midgame set.
+ */
+const PST_END = {
+  k: [
+    -50, -30, -30, -30, -30, -30, -30, -50,
+    -30, -20, -10, -10, -10, -10, -20, -30,
+    -30, -10,  20,  30,  30,  20, -10, -30,
+    -30, -10,  30,  40,  40,  30, -10, -30,
+    -30, -10,  30,  40,  40,  30, -10, -30,
+    -30, -10,  20,  30,  30,  20, -10, -30,
+    -30, -30,   0,   0,   0,   0, -30, -30,
+    -50, -30, -30, -30, -30, -30, -30, -50,
+  ],
+  p: [
+      0,   0,   0,   0,   0,   0,   0,   0,
+    120, 120, 120, 120, 120, 120, 120, 120,
+     70,  70,  70,  70,  70,  70,  70,  70,
+     40,  40,  40,  40,  40,  40,  40,  40,
+     20,  20,  20,  20,  20,  20,  20,  20,
+     10,  10,  10,  10,  10,  10,  10,  10,
+      5,   5,   5,   5,   5,   5,   5,   5,
+      0,   0,   0,   0,   0,   0,   0,   0,
+  ],
+};
+
+// Non-pawn material at the start, per side, used to measure how far into the
+// endgame we are: 4 minors + 2 rooks + 1 queen.
+const PHASE_MAX = 2 * (PIECE_VALUES.n + PIECE_VALUES.b + PIECE_VALUES.r) + PIECE_VALUES.q;
+
+/**
  * Static evaluation of a position, in centipawns, from White's perspective:
- * positive = good for White, negative = good for Black. It is simply
- * material plus the piece-square bonus for every piece on the board.
+ * positive = good for White, negative = good for Black. Material plus the
+ * piece-square bonus for every piece — blended between the midgame and
+ * endgame tables by how much material is left ("tapered evaluation"), so the
+ * king's idea of a good square changes gradually as pieces come off rather
+ * than flipping at some arbitrary move number.
  */
 export function evaluate(board) {
+  // First pass: material, and how much non-pawn material remains.
   let score = 0;
+  let nonPawn = 0;
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const piece = board[r][c];
+      if (!piece) continue;
+      const type = piece[1];
+      score += piece[0] === WHITE ? PIECE_VALUES[type] : -PIECE_VALUES[type];
+      if (type !== "p" && type !== "k") nonPawn += PIECE_VALUES[type];
+    }
+  }
+  // phase: 1 = opening material, 0 = bare kings and pawns.
+  const phase = Math.min(1, nonPawn / (2 * PHASE_MAX));
+
+  // Second pass: positional bonuses, blended for the current phase.
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       const piece = board[r][c];
@@ -469,11 +528,13 @@ export function evaluate(board) {
       const type = piece[1];
       // White reads the table as-is; Black reads it flipped vertically.
       const index = piece[0] === WHITE ? r * 8 + c : (7 - r) * 8 + c;
-      const value = PIECE_VALUES[type] + PST[type][index];
-      score += piece[0] === WHITE ? value : -value;
+      const mg = PST[type][index];
+      const end = PST_END[type];
+      const bonus = end === undefined ? mg : mg * phase + end[index] * (1 - phase);
+      score += piece[0] === WHITE ? bonus : -bonus;
     }
   }
-  return score;
+  return Math.round(score);
 }
 
 /* ------------------------------------------------------------------ */

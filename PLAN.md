@@ -44,6 +44,8 @@ needed** section and mark your choices.
 
 | Spec item | What was built |
 |---|---|
+| Randomized midgame/endgame start | **Start from** selector with balanced / convert / defend difficulties and a labelled theme. Endgames generated procedurally from strong-vs-weak material templates and validated by the engine; middlegames from semi-random engine self-play. Seeded and fuzz-tested (`src/positions.js`). |
+| Tapered evaluation | Separate midgame/endgame piece-square tables blended by remaining material, so the king centralises in endings instead of hiding. Cost ~9% node rate; fixes an opponent that previously lost K+P vs K by shuffling in the corner. |
 | 2-player mode (local) | **👥 2 Players** tab: hot-seat play on one device, auto-flipping board with a toggle, single-ply undo, engine idle throughout. Habit tracking paused so a shared game never pollutes a personal profile. |
 | Post-game coaching, per player | **Coach the game** batch-grades every ply in the worker and produces a separate report per colour — accuracy, quality breakdown, the three costliest moves with the better move named, and habit-based lessons. Pure logic in `src/review.js`, unit-tested. |
 
@@ -72,6 +74,22 @@ current architecture:
    add per-game accuracy history and a simple trend chart.
 7. **Achievements & streaks** — localStorage: puzzle streaks, no-blunder
    games, drill completions, daily activity.
+
+## 2b. Engine strength roadmap
+
+The engine is a classical minimax: alpha-beta, MVV-LVA ordering, quiescence,
+material + tapered piece-square evaluation. Roughly 110k nodes/sec, ~330k
+nodes at depth 5. What it does *not* have yet, in rough value-per-effort order:
+
+| Upgrade | Effect |
+|---|---|
+| **Transposition table** (Zobrist hashing) | Biggest single win. Positions reached by different move orders get looked up instead of re-searched — typically 2–5× deeper for the same time. |
+| **Iterative deepening + time budget** | Search depth 1, 2, 3… until a time limit. Enables a "think for N seconds" slider instead of a fixed depth, and each pass improves the next one's move ordering. |
+| **Killer moves / history heuristic** | Cheap ordering wins layered on top of MVV-LVA; more cutoffs for almost no code. |
+| **Null-move pruning, late-move reductions** | Large depth gains — but both can miss zugzwang, which matters most in exactly the endgames the practice mode generates. Needs care and an endgame guard. |
+| **Richer eval terms** | Passed/doubled/isolated pawns, mobility, king safety, bishop pair. Improves play quality rather than depth. |
+| **Opening book** | Removes the weakest phase of a shallow search and makes games less repetitive. |
+| **Stockfish WASM** | Decision D1 below — genuine GM strength and trustworthy analysis, with this engine kept as the readable teaching artifact. |
 
 ## 3. Decisions needed from you
 

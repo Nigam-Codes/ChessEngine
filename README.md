@@ -68,6 +68,32 @@ The coaching logic lives in `src/coach.js` — small, readable functions
 (`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
 same move generator the engine uses.
 
+## Practice from a random position
+
+Most games are lost in the middlegame and endgame, but you can only reach
+those by playing twenty moves of opening first. The **Start from** control
+fixes that: pick *Random midgame* or *Random endgame*, choose whether you want
+an equal game, a win to convert, or a loss to defend, and hit New game. A
+banner names what you're practising — *"Rook and pawn vs rook — you're winning,
+convert it"*. It works in 2-player hot-seat too, so two people can drill rook
+endings together.
+
+The two phases are generated differently, because scattering pieces works for
+one and not the other:
+
+- **Endgames** are built procedurally from material templates (K+P vs K, rook
+  endings, opposite-coloured bishops…) written as a *strong* and a *weak* side,
+  which is what lets the same table hand you either side. Positions are then
+  validated by the engine itself — kings not adjacent, nobody left in check,
+  game not already over — and rejected and retried until one passes.
+- **Middlegames** come from letting the engine play a short semi-random opening
+  against itself. Twenty pieces dropped at random make a position no real game
+  could reach; sixteen plies of actual play make one worth thinking about.
+
+Generation lives in `src/positions.js`, is seeded (so a seed reproduces a
+position exactly), and is fuzz-tested in `tests/positions.test.js` — hundreds
+of generated positions, each asserted legal and playable.
+
 ## 2-player mode
 
 The **👥 2 Players** tab turns the app into a shared board for two people on
@@ -163,8 +189,14 @@ from White's perspective: positive is good for White. It sums:
 - **Material** — pawn 100, knight 320, bishop 330, rook 500, queen 900.
 - **Piece-square tables** — a small bonus or penalty per square, so the
   engine knows *where* pieces belong, not just what they're worth:
-  knights love the center, advanced pawns gain value, the king prefers a
-  corner. Black uses the same tables mirrored vertically.
+  knights love the center, advanced pawns gain value. Black uses the same
+  tables mirrored vertically.
+- **Tapered evaluation** — a king wants opposite things in the opening and
+  the endgame: hidden on g1 while the queens are on, marching to the centre
+  once they're off. So there are two sets of tables, blended by how much
+  material is left. Without this the engine shuffles its king in the corner
+  while your pawn queens — it is the difference between an opponent that can
+  play an endgame and one that can't.
 
 ### 3. Minimax with alpha-beta pruning
 

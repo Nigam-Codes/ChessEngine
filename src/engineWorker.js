@@ -15,6 +15,7 @@
  */
 import { bestMove, moveToString } from "./engine.js";
 import { lossFor } from "./coach.js";
+import { generatePosition } from "./positions.js";
 
 const sameMove = (a, b) =>
   a.fromR === b.fromR && a.fromC === b.fromC && a.toR === b.toR && a.toC === b.toC;
@@ -42,6 +43,14 @@ self.onmessage = (event) => {
       type: "hint",
       result: bestMove(msg.board, msg.color, msg.depth, msg.ctx),
     });
+    return;
+  }
+
+  // Build a random practice position. The midgame generator plays a short
+  // opening against itself, so this belongs off the main thread with the rest
+  // of the searching.
+  if (msg.type === "generate") {
+    self.postMessage({ type: "generate-done", position: generatePosition(msg) });
     return;
   }
 
