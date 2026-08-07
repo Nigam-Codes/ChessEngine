@@ -18,6 +18,19 @@ import LearnMode from "./LearnMode.jsx";
 import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
 import { summarize, topMistakes, habitReport, criticalMoments } from "./review.js";
 import { targetsForDrag, squareKey } from "./planning.js";
+import {
+  TIME_CONTROLS,
+  DEFAULT_CONTROL,
+  findControl,
+  createClocks,
+  tick,
+  addIncrement,
+  formatClock,
+  flagResult,
+  depthForTime,
+  pressureSplit,
+  PRESSURE_THRESHOLD_MS,
+} from "./clock.js";
 import { LESSONS } from "./lessons.js";
 import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
 import ArrowLayer from "./Arrows.jsx";
@@ -41,7 +54,16 @@ const COLOR_NAME = { w: "White", b: "Black" };
 // stylesheet — keep the two in step.
 const FLIP_MS = 160;
 
-function statusText(status, turn, thinking, playerColor, vsHuman) {
+function statusText(status, turn, thinking, playerColor, vsHuman, flagged) {
+  if (flagged) {
+    if (flagged.outcome === "flagged-draw") {
+      return "Out of time — but the win needs material. Draw.";
+    }
+    if (vsHuman) return `${COLOR_NAME[turn]} flagged — ${COLOR_NAME[flagged.winner]} wins on time!`;
+    return flagged.winner === playerColor
+      ? "The engine flagged — you win on time!"
+      : "Out of time — you lose on time.";
+  }
   // `turn` is the side to move — and when the game is over, the side that has
   // no moves left, i.e. the loser.
   if (status === "checkmate") {
@@ -95,6 +117,14 @@ export default function ChessEngineLab() {
   // Hot-seat: rotate the board so the side to move sees their own pieces.
   const [autoFlip, setAutoFlip] = useState(true);
   // Where a new game starts from: the opening, or a generated practice position.
+  // Blitz: clocks in milliseconds, plus the moment the running clock last
+  // started. Time is always recomputed from real timestamps, never decremented
+  // by the interval, so a late or throttled tick can't gift back spent time.
+  const [timed, setTimed] = useState(false);
+  const [controlId, setControlId] = useState(DEFAULT_CONTROL);
+  const [clocks, setClocks] = useState(() => createClocks(DEFAULT_CONTROL));
+  const [flagged, setFlagged] = useState(null); // { outcome, winner }
+  const turnStartRef = useRef(null);
   const [startMode, setStartMode] = useState("standard"); // standard|midgame|endgame
   const [startDifficulty, setStartDifficulty] = useState("balanced");
   const [scenario, setScenario] = useState(null); // { label, target } when random
@@ -138,6 +168,8 @@ export default function ChessEngineLab() {
   playerColorRef.current = playerColor;
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
+  const timedRef = useRef(timed);
+  timedRef.current = timed;
   // Your moves so far this game, for opening-habit detection.
   const yourMovesRef = useRef([]);
 
@@ -210,6 +242,13 @@ export default function ChessEngineLab() {
       const result = msg.reply;
       const pc = playerColorRef.current;
       setThinking(false);
+      // The engine pays for its own thinking out of its own clock.
+      if (timedRef.current && turnStartRef.current != null) {
+        const spent = Date.now() - turnStartRef.current;
+        const engine = opposite(pc);
+        setClocks((c) => addIncrement(tick(c, engine, spent), engine));
+        turnStartRef.current = Date.now();
+      }
       setTelemetry(result);
       if (msg.coach) {
         setCoachReport(msg.coach);
@@ -256,7 +295,33 @@ export default function ChessEngineLab() {
     );
   }, [board, selected, controlledColor, ctx]);
 
-  const gameOver = status === "checkmate" || status === "stalemate";
+  const gameOver = status === "checkmate" || status === "stalemate" || !!flagged;
+
+  // A counter purely to re-render the clock display; the times themselves are
+  // always derived from timestamps, never from how often this fires.
+  const [clockNow, setClockNow] = useState(0);
+  useEffect(() => {
+    if (!timed || gameOver || settingUp) return;
+    const id = setInterval(() => setClockNow((n) => n + 1), 100);
+    return () => clearInterval(id);
+  }, [timed, gameOver, settingUp]);
+
+  /** Time left for a colour right now, counting the move in progress. */
+  const liveClock = (color) => {
+    const committed = clocks[color];
+    if (!timed || gameOver || color !== turn || turnStartRef.current == null) return committed;
+    return Math.max(0, committed - (Date.now() - turnStartRef.current));
+  };
+
+  // Flag the moment a clock empties. Whether that is a win or a draw depends
+  // on whether the opponent has enough material to mate.
+  useEffect(() => {
+    if (!timed || gameOver || turnStartRef.current == null) return;
+    if (liveClock(turn) <= 0) {
+      setFlagged(flagResult(board, turn));
+      setThinking(false);
+    }
+  });
 
   const handleSquareClick = (r, c) => {
     if (drawMode) return; // clicks draw, they don't move pieces
@@ -288,7 +353,14 @@ export default function ChessEngineLab() {
       const newStatus = getGameStatus(next, opposite(turn), afterCtx);
       // Record the ply for the post-game report, capturing the position it was
       // played in so the review can grade it exactly as it happened.
-      setPlyLog((p) => [...p, { board, played: move, color: turn, ctx }]);
+      const msLeftAtMove = timed ? liveClock(turn) : null;
+      setPlyLog((p) => [...p, { board, played: move, color: turn, ctx, msLeft: msLeftAtMove }]);
+      // Charge the mover for the time they just used, then hand over the clock.
+      if (timed && turnStartRef.current != null) {
+        const spent = Date.now() - turnStartRef.current;
+        setClocks((c) => addIncrement(tick(c, turn, spent), turn));
+        turnStartRef.current = Date.now();
+      }
       // Habit tracking is a personal profile — pause it in hot-seat so an
       // opponent's blunders never land in your lifetime stats.
       if (!vsHuman) {
@@ -339,7 +411,9 @@ export default function ChessEngineLab() {
         type: "move",
         board: next,
         color: engineColor,
-        depth: depthRef.current,
+        depth: timed
+          ? depthForTime(clocks[engineColor], depthRef.current)
+          : depthRef.current,
         ctx: afterCtx,
         fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
         // In teacher mode, also grade the move just played: analyze the
@@ -432,9 +506,11 @@ export default function ChessEngineLab() {
    * explicitly when switching modes, because the `opponent` state hasn't
    * re-rendered yet at that point.
    */
-  const newGame = (color, nextOpponent = opponent) => {
+  const newGame = (color, nextOpponent = opponent, nextTimed = timed) => {
     const humanOpponent = nextOpponent === "human";
     setOpponent(nextOpponent);
+    setTimed(nextTimed);
+    timedRef.current = nextTimed;
     // A search may be mid-flight; kill the worker so its result never lands.
     workerRef.current?.terminate();
     const worker = makeWorker();
@@ -465,6 +541,9 @@ export default function ChessEngineLab() {
     setUserArrows([]);
     setUserHighlights([]);
     setPreviewArrow(null);
+    setClocks(createClocks(controlId));
+    setFlagged(null);
+    turnStartRef.current = nextTimed ? Date.now() : null;
     setPlyLog([]);
     setReviewGrades(null);
     setReviewProgress(null);
@@ -741,6 +820,20 @@ export default function ChessEngineLab() {
     return "Which of your pieces is least active, and can you improve it?";
   }, [threats, lastMove]);
 
+  // Blitz's payoff: did accuracy hold up when the clock got low? Grades come
+  // back in ply order, so they line up with the clock readings in plyLog.
+  const pressure = useMemo(() => {
+    if (!timed || !gameOver) return null;
+    const mine = [];
+    gradeLog.forEach((g, i) => {
+      const ply = plyLog.filter((p) => p.color === playerColor)[i];
+      if (ply) mine.push({ loss: g.loss, msLeft: ply.msLeft });
+    });
+    if (mine.length === 0) return null;
+    const split = pressureSplit(mine);
+    return split.rushed.moves > 0 && split.calm.moves > 0 ? split : null;
+  }, [timed, gameOver, gradeLog, plyLog, playerColor]);
+
   // Post-game review (vs engine): verdict counts, accuracy, biggest swings.
   const review = useMemo(() => {
     if (!gameOver) return null;
@@ -787,12 +880,12 @@ export default function ChessEngineLab() {
 
       <div className="mode-tabs" role="tablist" aria-label="Mode">
         <button
-          className={"mode-tab" + (mode === "play" && !vsHuman ? " active" : "")}
+          className={"mode-tab" + (mode === "play" && !vsHuman && !timed ? " active" : "")}
           role="tab"
-          aria-selected={mode === "play" && !vsHuman}
+          aria-selected={mode === "play" && !vsHuman && !timed}
           onClick={() => {
             setMode("play");
-            if (vsHuman) newGame(WHITE, "engine");
+            if (vsHuman || timed) newGame(WHITE, "engine", false);
           }}
         >
           ♟ Play
@@ -803,10 +896,21 @@ export default function ChessEngineLab() {
           aria-selected={mode === "play" && vsHuman}
           onClick={() => {
             setMode("play");
-            if (!vsHuman) newGame(WHITE, "human");
+            if (!vsHuman || timed) newGame(WHITE, "human", false);
           }}
         >
           👥 2 Players
+        </button>
+        <button
+          className={"mode-tab" + (mode === "play" && timed ? " active" : "")}
+          role="tab"
+          aria-selected={mode === "play" && timed}
+          onClick={() => {
+            setMode("play");
+            if (!timed) newGame(WHITE, "engine", true);
+          }}
+        >
+          ⏱ Blitz
         </button>
         <button
           className={"mode-tab" + (mode === "learn" ? " active" : "")}
@@ -828,9 +932,36 @@ export default function ChessEngineLab() {
                role="status" aria-live="polite">
             {settingUp
               ? "Setting up a position…"
-              : statusText(status, turn, thinking, playerColor, vsHuman)}
+              : statusText(status, turn, thinking, playerColor, vsHuman, flagged)}
             {(thinking || settingUp) && <span className="spinner" aria-hidden="true" />}
           </div>
+
+          {timed && (
+            <div className="clocks" aria-label="Clocks">
+              {[opposite(playerColor), playerColor].map((color) => {
+                const ms = liveClock(color);
+                const running = !gameOver && color === turn;
+                return (
+                  <div
+                    key={color}
+                    className={
+                      "clock" +
+                      (running ? " clock-running" : "") +
+                      (ms < 10000 ? " clock-low" : "") +
+                      (ms <= 0 ? " clock-flag" : "")
+                    }
+                    role="timer"
+                    aria-label={`${COLOR_NAME[color]} clock`}
+                  >
+                    <span className="clock-who">
+                      {color === playerColor ? "You" : "Engine"}
+                    </span>
+                    <span className="clock-time">{formatClock(ms)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {scenario && (
             <p className="scenario" role="status">
@@ -929,7 +1060,7 @@ export default function ChessEngineLab() {
             <button
               className="reset"
               onClick={undo}
-              disabled={past.length === 0}
+              disabled={past.length === 0 || timed}
               title={
                 vsHuman
                   ? "Take back the last move"
@@ -939,6 +1070,26 @@ export default function ChessEngineLab() {
               Undo move
             </button>
             <button className="reset" onClick={reset}>New game</button>
+            {timed && (
+              <div className="start-picker" role="group" aria-label="Time control">
+                <span className="muted small">Clock</span>
+                {TIME_CONTROLS.map((c) => (
+                  <button
+                    key={c.id}
+                    className={"chip" + (controlId === c.id ? " chip-active" : "")}
+                    onClick={() => {
+                      setControlId(c.id);
+                      setClocks(createClocks(c.id));
+                      setFlagged(null);
+                    }}
+                    aria-pressed={controlId === c.id}
+                    title="Takes effect on the next new game"
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="start-picker" role="group" aria-label="Where a new game starts from">
               <span className="muted small">Start from</span>
               {[
@@ -1020,7 +1171,7 @@ export default function ChessEngineLab() {
                 <span>Auto-flip</span>
               </label>
             )}
-            {!vsHuman && (
+            {!vsHuman && !timed && (
               <label className="teacher-toggle">
                 <input
                   type="checkbox"
@@ -1046,7 +1197,7 @@ export default function ChessEngineLab() {
             <section className="panel panel-review" aria-label="Coach report">
               <h2>Coach report</h2>
               <p className="review-result">
-                {statusText(status, turn, false, playerColor, true)}
+                {statusText(status, turn, false, playerColor, true, flagged)}
               </p>
               {!coachReports && (
                 <>
@@ -1184,7 +1335,7 @@ export default function ChessEngineLab() {
             <section className="panel panel-review" aria-label="Game review">
               <h2>Game review</h2>
               <p className="review-result">
-                {statusText(status, turn, false, playerColor, false)}
+                {statusText(status, turn, false, playerColor, false, flagged)}
               </p>
               {review.accuracy != null ? (
                 <p>
@@ -1195,6 +1346,24 @@ export default function ChessEngineLab() {
                 <p className="muted small">
                   Play with Teacher mode on to get accuracy and move grades in the review.
                 </p>
+              )}
+              {pressure && (
+                <div className="pressure">
+                  <h3 className="review-h3">Under pressure</h3>
+                  <p>
+                    With time to think: <strong>{pressure.calm.accuracy}%</strong>{" "}
+                    <span className="muted small">({pressure.calm.moves} moves)</span>
+                    {" · "}
+                    Under {PRESSURE_THRESHOLD_MS / 1000}s:{" "}
+                    <strong>{pressure.rushed.accuracy}%</strong>{" "}
+                    <span className="muted small">({pressure.rushed.moves} moves)</span>
+                  </p>
+                  <p className="muted small">
+                    {pressure.rushed.accuracy < pressure.calm.accuracy - 5
+                      ? "Your play drops when the clock does — that gap is the thing to train."
+                      : "You held your standard as the clock ran down. That's the hard part."}
+                  </p>
+                </div>
               )}
               {review.graded > 0 && (
                 <p className="review-counts">
@@ -1243,7 +1412,7 @@ export default function ChessEngineLab() {
             </section>
           )}
 
-          {teacherMode && !vsHuman && (
+          {teacherMode && !vsHuman && !timed && (
             <section className="panel panel-coach" aria-label="Coach">
               <h2>Coach</h2>
               {grading ? (

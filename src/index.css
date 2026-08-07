@@ -830,3 +830,53 @@ button {
   border-radius: 6px;
   font-size: 0.9rem;
 }
+
+/* ---- Blitz clocks ---- */
+
+.clocks {
+  max-width: 560px;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.clock {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.8rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.clock-who {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.clock-time {
+  font-size: 1.35rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The side actually on the clock is the one that should draw the eye. */
+.clock-running {
+  border-color: var(--accent);
+  background: var(--bg-panel-2);
+}
+
+.clock-low .clock-time { color: var(--check-red); }
+
+.clock-flag {
+  border-color: var(--check-red);
+  opacity: 0.7;
+}
+
+.pressure { margin: 0.5rem 0; }

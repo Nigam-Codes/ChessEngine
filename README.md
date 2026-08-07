@@ -69,6 +69,29 @@ The coaching logic lives in `src/coach.js` — small, readable functions
 (`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
 same move generator the engine uses.
 
+## Blitz mode
+
+The **⏱ Blitz** tab adds the one thing a practice board usually lacks: a clock.
+Pick 1+0 bullet through 10+0 rapid, and both clocks run — yours while you
+think, the engine's while it searches. Under ten seconds the display switches
+to tenths, which is exactly when you start watching it instead of the board.
+
+Two details make it a real game rather than a countdown:
+
+- **The engine budgets its own time.** It picks the deepest search it can
+  afford from what's left on *its* clock (`depthForTime`), so it plays fast in
+  a scramble instead of thinking for twelve seconds and flagging itself.
+- **Flagging follows the actual rule.** Running out of time loses — unless the
+  opponent couldn't possibly mate with what they have left, in which case it's
+  a draw. A lone king, or a king and one minor piece, can't.
+
+Takebacks and live coaching are off under a clock; the post-game review still
+runs, and adds the question the mode exists to ask: **your accuracy with time
+to think, against your accuracy under 30 seconds.** If the second number is
+much lower, that gap is the thing to train.
+
+Clock rules live in `src/clock.js`, unit-tested in `tests/clock.test.js`.
+
 ## Drawing arrows that are actually chess
 
 Most boards let you drag an arrow anywhere, so you can draw a knight moving in
