@@ -17,6 +17,7 @@ import {
 import LearnMode from "./LearnMode.jsx";
 import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
 import { summarize, topMistakes, habitReport, criticalMoments } from "./review.js";
+import { targetsForDrag, squareKey } from "./planning.js";
 import { LESSONS } from "./lessons.js";
 import MiniBoard, { GLYPHS } from "./MiniBoard.jsx";
 import ArrowLayer from "./Arrows.jsx";
@@ -112,6 +113,9 @@ export default function ChessEngineLab() {
   const [userArrows, setUserArrows] = useState([]); // board coords
   const [userHighlights, setUserHighlights] = useState([]); // "r-c" keys
   const [previewArrow, setPreviewArrow] = useState(null);
+  // Where the in-progress sketch may end: a Set of "r-c" keys, or null when
+  // the drag began on an empty square and so is freeform.
+  const [drawDests, setDrawDests] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
   const drawStartRef = useRef(null);
   const boardElRef = useRef(null);
@@ -672,15 +676,25 @@ export default function ChessEngineLab() {
     const sq = squareAt(e.clientX, e.clientY);
     if (!sq) return;
     e.preventDefault();
-    drawStartRef.current = { sq, color: sketchColor(e) };
+    // Arrows have to be real chess: work out where this piece may legally go,
+    // replaying any arrows already drawn so plans can chain. A null result
+    // means the square is empty, and the arrow is a freeform annotation.
+    const dests = targetsForDrag(board, ctx, userArrows, sq);
+    drawStartRef.current = { sq, color: sketchColor(e), dests };
+    setDrawDests(dests);
     boardElRef.current?.setPointerCapture?.(e.pointerId);
   };
+
+  /** May the sketch in progress end on this square? */
+  const canDrawTo = (start, sq) => !start.dests || start.dests.has(squareKey(sq.r, sq.c));
 
   const onBoardPointerMove = (e) => {
     const start = drawStartRef.current;
     if (!start) return;
     const sq = squareAt(e.clientX, e.clientY);
-    if (!sq || (sq.r === start.sq.r && sq.c === start.sq.c)) {
+    if (!sq || (sq.r === start.sq.r && sq.c === start.sq.c) || !canDrawTo(start, sq)) {
+      // Nothing is previewed over an illegal square — the destination dots
+      // already show where the arrow is allowed to land.
       setPreviewArrow(null);
       return;
     }
@@ -692,6 +706,7 @@ export default function ChessEngineLab() {
     if (!start) return;
     drawStartRef.current = null;
     setPreviewArrow(null);
+    setDrawDests(null);
     const sq = squareAt(e.clientX, e.clientY);
     if (!sq) return;
     if (sq.r === start.sq.r && sq.c === start.sq.c) {
@@ -702,6 +717,7 @@ export default function ChessEngineLab() {
       );
       return;
     }
+    if (!canDrawTo(start, sq)) return; // not a move that piece could make
     const same = (a) =>
       a.from[0] === start.sq.r && a.from[1] === start.sq.c &&
       a.to[0] === sq.r && a.to[1] === sq.c;
@@ -845,7 +861,9 @@ export default function ChessEngineLab() {
                 const piece = board[r][c];
                 const dark = (r + c) % 2 === 1;
                 const isSelected = selected && selected.r === r && selected.c === c;
-                const isTarget = targets.some((m) => m.toR === r && m.toC === c);
+                const isTarget =
+                  targets.some((m) => m.toR === r && m.toC === c) ||
+                  (drawDests ? drawDests.has(squareKey(r, c)) : false);
                 const isLast =
                   lastMove &&
                   ((lastMove.fromR === r && lastMove.fromC === c) ||

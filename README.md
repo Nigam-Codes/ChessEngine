@@ -7,7 +7,8 @@ review with accuracy, move grades, and an evaluation graph. Castle by clicking y
 Plan your ideas chess.com-style: right-click-drag (or the ✏️ Draw toggle on
 touch screens) sketches arrows on the board, dragging within one square
 highlights it, Shift/Alt/Ctrl pick red/blue/green, and a left click wipes
-the sketch. Flipping the board animates. Switch to
+the sketch. **Sketched arrows have to be legal chess** — see below. Flipping
+the board animates. Switch to
 **Learn mode** for hands-on drills across tactics, openings, and endgames.
 At low strength levels the engine also makes human-like mistakes instead of
 just searching shallower. See `PLAN.md` for the full roadmap toward the
@@ -67,6 +68,33 @@ tutor:
 The coaching logic lives in `src/coach.js` — small, readable functions
 (`hangingPieces`, `findForks`, `findPins`, `classifyMove`) built on the
 same move generator the engine uses.
+
+## Drawing arrows that are actually chess
+
+Most boards let you drag an arrow anywhere, so you can draw a knight moving in
+a straight line. In an app that grades your moves and names your bad habits,
+that quietly teaches the wrong thing — so an arrow starting on a piece may only
+end where that piece could legally go. Press a knight and you get dots on its
+two L-squares and nowhere else.
+
+Because the destinations come from the engine's own `legalMoves`, arrows
+inherit every rule for free: castling, en passant, promotion — and pins. A
+pinned knight offers no destinations at all, because it genuinely has none.
+
+Two behaviours fall out of one rule. Arrows are replayed in draw order against
+a scratch board; an arrow whose from-square holds a piece is applied as a move,
+and one starting on an empty square is left alone as an annotation. So:
+
+- **Freeform still works.** Drag from an empty square to mark an idea, a
+  target, or a pawn-storm direction — no piece there, nothing to constrain.
+- **Arrows chain.** Draw `Nf3`, then drag from f3 and you get the knight's
+  moves *from there*, so you can sketch `Nf3 → Ng5` a move ahead. Nothing has
+  to check whose turn it is, because a plan legitimately holds two moves by the
+  same side, or a move and its reply.
+
+You can draw the opponent's moves too, which is most of what arrows are for
+while thinking. The logic is in `src/planning.js`, unit-tested in
+`tests/planning.test.js`.
 
 ## Practice from a random position
 
