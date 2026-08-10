@@ -880,3 +880,28 @@ button {
 }
 
 .pressure { margin: 0.5rem 0; }
+
+/* ---- Piece movement, dragging ---- */
+
+/* The moved piece is rendered one frame at its old offset with transitions
+   off, then the offset is dropped so it slides home from there. */
+.piece-anim { transition: transform 150ms ease-out; }
+
+/* The original stays put but hidden while its ghost follows the pointer. */
+.piece-dragging { opacity: 0.25; }
+
+.drag-ghost {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 20;
+  font-size: clamp(1.6rem, 6.2vmin, 3rem);
+}
+
+/* Grabbing a piece should feel grabbable. */
+.board .square:has(.piece) { cursor: grab; }
+.board.drawing .square:has(.piece) { cursor: crosshair; }
+
+@media (prefers-reduced-motion: reduce) {
+  .piece-anim { transition: none !important; }
+}

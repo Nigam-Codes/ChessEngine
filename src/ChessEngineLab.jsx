@@ -18,6 +18,7 @@ import LearnMode from "./LearnMode.jsx";
 import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
 import { summarize, topMistakes, habitReport, criticalMoments } from "./review.js";
 import { targetsForDrag, squareKey } from "./planning.js";
+import { playSound, soundForMove, loadMuted, setMuted, isMuted } from "./sounds.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -146,6 +147,13 @@ export default function ChessEngineLab() {
   // Where the in-progress sketch may end: a Set of "r-c" keys, or null when
   // the drag began on an empty square and so is freeform.
   const [drawDests, setDrawDests] = useState(null);
+  const [muted, setMutedState] = useState(loadMuted);
+  // The piece that just moved, rendered one frame at its *old* offset so CSS
+  // can slide it home. Cleared as soon as the transition starts.
+  const [slide, setSlide] = useState(null);
+  // A piece being dragged: { from, piece, x, y } in client coordinates.
+  const [drag, setDrag] = useState(null);
+  const dragRef = useRef(null);
   const [drawMode, setDrawMode] = useState(false);
   const drawStartRef = useRef(null);
   const boardElRef = useRef(null);
@@ -200,6 +208,29 @@ export default function ChessEngineLab() {
       saveHabitStats(next);
       return next;
     });
+  }, []);
+
+  /**
+   * Everything that happens *around* a move landing: the sound it makes and
+   * the slide from its old square. Shared so your moves and the engine's
+   * behave identically.
+   */
+  const announceMove = useCallback((move, { check = false, over = false } = {}) => {
+    playSound(soundForMove(move, { check, gameOver: over }));
+    const reduced =
+      typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced || !move) return;
+    // Render the piece one frame at its old offset, then drop the offset so
+    // CSS transitions it home — a reverse FLIP, no piece identity required.
+    setSlide({
+      fromR: move.fromR, fromC: move.fromC, toR: move.toR, toC: move.toC,
+      rook: move.castle ? { fromC: move.rook.fromC, toC: move.rook.toC } : null,
+      phase: "start",
+    });
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => setSlide((sl) => (sl ? { ...sl, phase: "end" } : null)))
+    );
   }, []);
 
   // Grading quality shouldn't drop with an easy opponent, nor stall the
@@ -270,6 +301,10 @@ export default function ChessEngineLab() {
       setBoard(next);
       setStatus(newStatus);
       setLastMove(result.move);
+      announceMove(result.move, {
+        check: newStatus === "check",
+        over: newStatus === "checkmate" || newStatus === "stalemate",
+      });
       setTurn(pc);
       setThreats(threatReport(next, pc));
       setEvalHistory((h) => [...h, evaluate(next)]);
@@ -280,7 +315,7 @@ export default function ChessEngineLab() {
       ]);
     };
     return worker;
-  }, [recordHabitEvents, recordGameEnd]);
+  }, [recordHabitEvents, recordGameEnd, announceMove]);
 
   useEffect(() => {
     workerRef.current = makeWorker();
@@ -384,6 +419,10 @@ export default function ChessEngineLab() {
       setBoard(next);
       setSelected(null);
       setLastMove(move);
+      announceMove(move, {
+        check: newStatus === "check",
+        over: newStatus === "checkmate" || newStatus === "stalemate",
+      });
       setStatus(newStatus);
       setHint(null);
       setHintLevel(0);
@@ -733,6 +772,29 @@ export default function ChessEngineLab() {
     }));
   }, [boardArrows, userArrows, previewArrow, orientBlack]);
 
+  /**
+   * The offset a just-moved piece starts from, in display space. Only applied
+   * on the first frame ("start"); dropping it lets the CSS transition carry
+   * the piece home. Board deltas are converted here rather than when the move
+   * was made, so a board that flipped in between still animates correctly.
+   */
+  const slideStyle = (r, c) => {
+    if (!slide || slide.phase !== "start") return undefined;
+    const sign = orientBlack ? -1 : 1;
+    const offset = (dr, dc) => ({
+      transform: `translate(${dc * sign * 100}%, ${dr * sign * 100}%)`,
+      transition: "none",
+    });
+    if (r === slide.toR && c === slide.toC) {
+      return offset(slide.fromR - slide.toR, slide.fromC - slide.toC);
+    }
+    // Castling moves two pieces; the rook slides along the same rank.
+    if (slide.rook && r === slide.toR && c === slide.rook.toC) {
+      return offset(0, slide.rook.fromC - slide.rook.toC);
+    }
+    return undefined;
+  };
+
   /** The board square under a pointer event, in board coordinates. */
   const squareAt = (clientX, clientY) => {
     const el = boardElRef.current;
@@ -751,8 +813,33 @@ export default function ChessEngineLab() {
 
   const onBoardPointerDown = (e) => {
     const drawing = e.button === 2 || (drawMode && (e.button === 0 || e.pointerType === "touch"));
+    const start = squareAt(e.clientX, e.clientY);
+
+    // Dragging a piece: left button, not in draw mode, on a piece you may move.
+    // Click-to-move still works — this only adds a second way in, as on
+    // chess.com, and selecting on pointer-down means the target dots are
+    // already up by the time the drag begins.
+    if (!drawing && e.button === 0 && start) {
+      const piece = board[start.r][start.c];
+      const yours = piece && piece[0] === controlledColor;
+      if (yours && !thinking && !gameOver && !settingUp && turn === controlledColor) {
+        // Deliberately *not* capturing the pointer here: capturing on
+        // pointer-down retargets the following click to the board, which
+        // silently breaks click-to-move. Capture only once the pointer
+        // actually moves (see onBoardPointerMove), so a plain click is
+        // untouched and a real drag still tracks outside the board.
+        // Note we do *not* select here. A plain click selects via the
+        // square's own onClick, and selecting on pointer-down too would let
+        // the click immediately toggle it back off.
+        dragRef.current = { from: start, piece, moved: false, pointerId: e.pointerId };
+        setDrag({ from: start, piece, x: e.clientX, y: e.clientY });
+        return;
+      }
+      return; // not a draggable piece — let the click handler deal with it
+    }
+
     if (!drawing) return;
-    const sq = squareAt(e.clientX, e.clientY);
+    const sq = start;
     if (!sq) return;
     e.preventDefault();
     // Arrows have to be real chess: work out where this piece may legally go,
@@ -768,6 +855,18 @@ export default function ChessEngineLab() {
   const canDrawTo = (start, sq) => !start.dests || start.dests.has(squareKey(sq.r, sq.c));
 
   const onBoardPointerMove = (e) => {
+    if (dragRef.current) {
+      if (!dragRef.current.moved) {
+        dragRef.current.moved = true;
+        // Now it is a real drag: capture the pointer so it keeps tracking
+        // outside the board, and select the piece so its legal squares light
+        // up under the cursor.
+        boardElRef.current?.setPointerCapture?.(dragRef.current.pointerId);
+        setSelected(dragRef.current.from);
+      }
+      setDrag((d) => (d ? { ...d, x: e.clientX, y: e.clientY } : null));
+      return;
+    }
     const start = drawStartRef.current;
     if (!start) return;
     const sq = squareAt(e.clientX, e.clientY);
@@ -781,6 +880,20 @@ export default function ChessEngineLab() {
   };
 
   const onBoardPointerUp = (e) => {
+    if (dragRef.current) {
+      const { from, moved } = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      // A press with no movement is a click, and the square's own onClick will
+      // handle it — doing it here as well would toggle the selection twice.
+      if (!moved) return;
+      const sq = squareAt(e.clientX, e.clientY);
+      // Dropping back where you started just leaves the piece selected, so a
+      // mis-grab doesn't deselect. Anywhere else goes through the same
+      // handler a click would, so there is one move path, not two.
+      if (sq && !(sq.r === from.r && sq.c === from.c)) handleSquareClick(sq.r, sq.c);
+      return;
+    }
     const start = drawStartRef.current;
     if (!start) return;
     drawStartRef.current = null;
@@ -1018,7 +1131,15 @@ export default function ChessEngineLab() {
                     }
                   >
                     {piece && (
-                      <span className={"piece " + (piece[0] === "w" ? "white-piece" : "black-piece")}>
+                      <span
+                        className={
+                          "piece " +
+                          (piece[0] === "w" ? "white-piece" : "black-piece") +
+                          (slide ? " piece-anim" : "") +
+                          (drag && drag.from.r === r && drag.from.c === c ? " piece-dragging" : "")
+                        }
+                        style={slideStyle(r, c)}
+                      >
                         {GLYPHS[piece]}
                       </span>
                     )}
@@ -1030,6 +1151,18 @@ export default function ChessEngineLab() {
               })
             )}
             <ArrowLayer arrows={allArrows} />
+            {drag && (
+              <span
+                className={
+                  "piece drag-ghost " +
+                  (drag.piece[0] === "w" ? "white-piece" : "black-piece")
+                }
+                style={{ left: drag.x, top: drag.y }}
+                aria-hidden="true"
+              >
+                {GLYPHS[drag.piece]}
+              </span>
+            )}
           </div>
 
           {teacherMode && boardArrows.length > 0 && (
@@ -1128,6 +1261,14 @@ export default function ChessEngineLab() {
             )}
             <button className="reset" onClick={() => setFlipped((f) => !f)} title="Rotate the board 180°">
               Flip board
+            </button>
+            <button
+              className="reset"
+              onClick={() => setMutedState(setMuted(!isMuted()))}
+              aria-pressed={muted}
+              title={muted ? "Turn sound on" : "Turn sound off"}
+            >
+              {muted ? "🔇 Sound off" : "🔊 Sound on"}
             </button>
             <button
               className={"reset" + (drawMode ? " draw-active" : "")}
