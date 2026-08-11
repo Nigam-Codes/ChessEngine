@@ -24,6 +24,7 @@ import { outcomeFor, TERMINAL, DRAW_REASONS } from "./rules.js";
 import { premoveSquares, resolvePremove } from "./premove.js";
 import { openingForMoves } from "./openings.js";
 import { THEMES, loadTheme, applyTheme } from "./themes.js";
+import { cardModel, drawCard, CARD_WIDTH, CARD_HEIGHT } from "./share.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -1219,6 +1220,42 @@ export default function ChessEngineLab() {
     );
   };
 
+  /**
+   * Render the finished game to a PNG and hand it to the browser.
+   *
+   * Drawn at twice the nominal size and scaled back down, or the card is soft
+   * on any modern screen — the canvas has no idea about device pixel ratio
+   * unless it is told.
+   */
+  const saveCard = () => {
+    const model = cardModel({
+      result,
+      evalHistory,
+      plyLog,
+      grades: reviewGrades,
+      opening,
+      playerColor,
+      vsHuman,
+    });
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = CARD_WIDTH * scale;
+    canvas.height = CARD_HEIGHT * scale;
+    const c2d = canvas.getContext("2d");
+    c2d.scale(scale, scale);
+    drawCard(c2d, model);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "chess-game-card.png";
+      link.click();
+      // Revoking immediately can cancel the download in some browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }, "image/png");
+  };
+
   /** The strip of pieces one colour has taken, with its material lead. */
   const capturedStrip = (color) => {
     const taken = captured[color];
@@ -1739,6 +1776,14 @@ export default function ChessEngineLab() {
                     >
                       Review
                     </button>
+                    <button
+                      className="reset"
+                      onClick={saveCard}
+                      disabled={plyLog.length === 0}
+                      title="Download a PNG summary of this game"
+                    >
+                      Save card
+                    </button>
                   </div>
                   <p className="muted small">Esc, or click the board, to look at the position.</p>
                 </div>
@@ -1808,6 +1853,18 @@ export default function ChessEngineLab() {
                   Resign
                 </button>
               </>
+            )}
+            {gameOver && (
+              // Also on the result card, but that can be dismissed — and the
+              // card is worth more *after* a review, when it can show accuracy.
+              <button
+                className="reset"
+                onClick={saveCard}
+                disabled={plyLog.length === 0}
+                title="Download a PNG summary of this game"
+              >
+                Save card
+              </button>
             )}
             {timed && (
               <div className="start-picker" role="group" aria-label="Time control">
