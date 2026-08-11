@@ -32,6 +32,9 @@ function gradePly(board, color, played, depth, ctx) {
     best: analysis.move,
     bestScore: analysis.score,
     playedScore: match ? match.score : null,
+    // The position both moves were played from, so the caller can name them
+    // in short algebraic without having to remember which board that was.
+    board,
   };
 }
 
@@ -65,8 +68,8 @@ self.onmessage = (event) => {
           ply: i,
           color: ply.color,
           loss: lossFor(g.bestScore, g.playedScore, ply.color),
-          playedStr: moveToString(ply.played),
-          bestStr: moveToString(g.best),
+          playedStr: moveToString(ply.played, ply.board),
+          bestStr: moveToString(g.best, ply.board),
           playedScore: g.playedScore,
           bestScore: g.bestScore,
         });

@@ -364,4 +364,80 @@ test("underpromotion is findable: the rook that avoids stalemate", () => {
   assert.equal(best.move.promotion, "wr", `expected b8=R, got ${moveToString(best.move)}`);
 });
 
+/* ---------------- Short algebraic notation ---------------- */
+
+test("moves are named the short way, and only disambiguated when they must be", () => {
+  // A lone knight needs no help.
+  const lone = pos({ e1: "wk", g1: "wn", e8: "bk" });
+  const jump = legalMoves(lone, WHITE, EMPTY_CONTEXT).find(
+    (m) => m.piece === "wn" && m.toR === 5 && m.toC === 5
+  );
+  assert.equal(moveToString(jump, lone), "Nf3");
+
+  // Two knights that both reach d2: they differ by file, so the file is enough.
+  const twoFiles = pos({ e1: "wk", b1: "wn", f1: "wn", e8: "bk" });
+  const fromB = legalMoves(twoFiles, WHITE, EMPTY_CONTEXT).find(
+    (m) => m.fromC === 1 && m.toR === 6 && m.toC === 3
+  );
+  assert.equal(moveToString(fromB, twoFiles), "Nbd2");
+
+  // Two rooks on the same file that both reach a3: now the rank is needed.
+  const sameFile = pos({ e1: "wk", a1: "wr", a5: "wr", e8: "bk" });
+  const fromA1 = legalMoves(sameFile, WHITE, EMPTY_CONTEXT).find(
+    (m) => m.piece === "wr" && m.fromR === 7 && m.toR === 5 && m.toC === 0
+  );
+  assert.equal(moveToString(fromA1, sameFile), "R1a3");
+});
+
+test("captures, pawns and promotions read the way a scoresheet does", () => {
+  const board = pos({ e1: "wk", e4: "wp", d5: "bp", g1: "wn", e8: "bk" });
+  const moves = legalMoves(board, WHITE, EMPTY_CONTEXT);
+  const pawnTake = moves.find((m) => m.piece === "wp" && m.toC === 3);
+  assert.equal(moveToString(pawnTake, board), "exd5", "a pawn capture names its file");
+
+  const push = moves.find((m) => m.piece === "wp" && m.toC === 4);
+  assert.equal(moveToString(push, board), "e5", "a quiet pawn move is just the square");
+
+  const knight = moves.find((m) => m.piece === "wn" && m.toR === 5 && m.toC === 5);
+  assert.equal(moveToString(knight, board), "Nf3");
+
+  // A piece capture takes an x but no file.
+  const withTarget = pos({ e1: "wk", f3: "wn", e5: "bp", e8: "bk" });
+  const take = legalMoves(withTarget, WHITE, EMPTY_CONTEXT).find(
+    (m) => m.piece === "wn" && m.toR === 3 && m.toC === 4
+  );
+  assert.equal(moveToString(take, withTarget), "Nxe5");
+});
+
+test("a blocked rival is not a rival, so no disambiguation is added", () => {
+  // Two rooks on the a-file, but a pawn between a5 and a3 means only one of
+  // them can actually get there — naming it "R1a3" would be wrong.
+  const board = pos({ e1: "wk", a1: "wr", a5: "wr", a4: "wp", e8: "bk" });
+  const move = legalMoves(board, WHITE, EMPTY_CONTEXT).find(
+    (m) => m.piece === "wr" && m.fromR === 7 && m.toR === 5 && m.toC === 0
+  );
+  assert.equal(moveToString(move, board), "Ra3");
+});
+
+test("castling and promotion keep their own notation", () => {
+  const board = pos({ e1: "wk", h1: "wr", b7: "wp", e8: "bk" });
+  const ctx = { rights: { wk: true, wq: false, bk: false, bq: false }, ep: null, half: 0 };
+  const moves = legalMoves(board, WHITE, ctx);
+  assert.equal(moveToString(moves.find((m) => m.castle === "K"), board), "O-O");
+  assert.equal(
+    moveToString(moves.find((m) => m.promotion === "wn"), board),
+    "b8=N",
+    "promotion still names the piece"
+  );
+});
+
+test("without a board a move is still named, just never disambiguated", () => {
+  // Call sites that have no position handy must not crash or print garbage.
+  const board = pos({ e1: "wk", b1: "wn", f1: "wn", e8: "bk" });
+  const move = legalMoves(board, WHITE, EMPTY_CONTEXT).find(
+    (m) => m.fromC === 1 && m.toR === 6 && m.toC === 3
+  );
+  assert.equal(moveToString(move), "Nd2");
+});
+
 console.log(`\n${passed} tests passed.`);

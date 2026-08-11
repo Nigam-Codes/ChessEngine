@@ -768,16 +768,78 @@ export function squareName(r, c) {
   return "abcdefgh"[c] + (8 - r);
 }
 
-/** Compact human-readable notation, e.g. "Nf3", "exd5", "e8=Q". */
-export function moveToString(move) {
+/**
+ * Standard algebraic notation: "Nf3", "exd5", "e8=Q", "Nbd2", "R1a3".
+ *
+ * `board` is the position the move is played *from*, and it is what makes this
+ * short rather than long. A piece name alone is ambiguous whenever two of the
+ * same kind can reach the square, and SAN resolves that with the least
+ * information that does the job: the file if that distinguishes them, else the
+ * rank, else both. Working that out means knowing what else is on the board.
+ *
+ * Without a board the move is still named, just never disambiguated — fine for
+ * a one-off label, wrong for a move list, so pass the position where you have
+ * it. Check and mate suffixes are added by the caller, which knows the
+ * position *after* the move.
+ */
+export function moveToString(move, board = null) {
   if (move.castle) return move.castle === "K" ? "O-O" : "O-O-O";
   const type = move.piece[1];
   const capture = move.captured ? "x" : "";
   const target = squareName(move.toR, move.toC);
+
   if (type === "p") {
+    // A pawn is named by the file it came from, but only when it captures.
     const file = capture ? "abcdefgh"[move.fromC] : "";
     const promo = move.promotion ? "=" + move.promotion[1].toUpperCase() : "";
     return file + capture + target + promo;
   }
-  return type.toUpperCase() + squareName(move.fromR, move.fromC) + capture + target;
+
+  return type.toUpperCase() + disambiguate(move, board) + capture + target;
+}
+
+/**
+ * The smallest hint that says which piece moved: "", a file, a rank, or both.
+ * Uses pseudo-legal moves rather than legal ones — the same simplification
+ * every notation implementation makes, and it only differs in the rare case
+ * where the rival piece is pinned.
+ */
+function disambiguate(move, board) {
+  if (!board) return "";
+  const rivals = [];
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      if (board[r][c] !== move.piece) continue;
+      if (r === move.fromR && c === move.fromC) continue;
+      if (canReach(board, r, c, move.toR, move.toC)) rivals.push({ r, c });
+    }
+  }
+  if (rivals.length === 0) return "";
+  const files = "abcdefgh";
+  if (!rivals.some((p) => p.c === move.fromC)) return files[move.fromC];
+  if (!rivals.some((p) => p.r === move.fromR)) return String(8 - move.fromR);
+  return files[move.fromC] + (8 - move.fromR);
+}
+
+/** Could the piece on (r,c) move to (tr,tc) in this position? Pawns excluded. */
+function canReach(board, r, c, tr, tc) {
+  const piece = board[r][c];
+  const type = piece[1];
+  if (board[tr][tc] && board[tr][tc][0] === piece[0]) return false;
+
+  if (type === "n" || type === "k") {
+    const steps = type === "n" ? KNIGHT_JUMPS : KING_STEPS;
+    return steps.some(([dr, dc]) => r + dr === tr && c + dc === tc);
+  }
+  const dirs =
+    type === "b" ? BISHOP_DIRS : type === "r" ? ROOK_DIRS : [...BISHOP_DIRS, ...ROOK_DIRS];
+  for (const [dr, dc] of dirs) {
+    let cr = r + dr, cc = c + dc;
+    while (onBoard(cr, cc)) {
+      if (cr === tr && cc === tc) return true;
+      if (board[cr][cc]) break; // the ray is blocked short of the target
+      cr += dr; cc += dc;
+    }
+  }
+  return false;
 }

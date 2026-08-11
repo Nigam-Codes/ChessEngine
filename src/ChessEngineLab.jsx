@@ -332,7 +332,10 @@ export default function ChessEngineLab() {
         setClocks((c) => addIncrement(tick(c, engine, spent), engine));
         turnStartRef.current = Date.now();
       }
-      setTelemetry(result);
+      // Keep the position the search ran in: the candidate moves belong to it,
+      // not to the board that exists once the reply has been played, and
+      // naming them against the wrong position would disambiguate wrongly.
+      setTelemetry({ ...result, board: boardRef.current });
       setViewPly(null); // the engine moved; the live game is the thing to show
       if (msg.coach) {
         setCoachReport(msg.coach);
@@ -342,7 +345,7 @@ export default function ChessEngineLab() {
               ? msg.coach.bestScore - msg.coach.playedScore
               : msg.coach.playedScore - msg.coach.bestScore;
           recordHabitEvents(gradingEvents(loss));
-          setGradeLog((g) => [...g, { moveStr: moveToString(msg.coach.played), loss }]);
+          setGradeLog((g) => [...g, { moveStr: moveToString(msg.coach.played, msg.coach.board), loss }]);
         }
       }
       if (!result.move) return;
@@ -375,7 +378,7 @@ export default function ChessEngineLab() {
       setEvalHistory((h) => [...h, evaluate(next)]);
       setHistory((h) => [
         ...h,
-        moveToString(result.move) +
+        moveToString(result.move, log[log.length - 1].board) +
           (newStatus === "checkmate" ? "#" : newStatus === "check" ? "+" : ""),
       ]);
     };
@@ -577,7 +580,7 @@ export default function ChessEngineLab() {
     setEvalHistory((h) => [...h, evaluate(next)]);
     setHistory((h) => [
       ...h,
-      moveToString(move) +
+      moveToString(move, board) +
         (newStatus === "checkmate" ? "#" : newStatus === "check" ? "+" : ""),
     ]);
     // Hand the turn over first, even when the game just ended: `turn` always
@@ -993,8 +996,8 @@ export default function ChessEngineLab() {
     return {
       ...graded,
       isBest,
-      playedStr: moveToString(played),
-      bestStr: moveToString(best),
+      playedStr: moveToString(played, coachReport.board),
+      bestStr: moveToString(best, coachReport.board),
       playedScore,
       bestScore,
     };
@@ -2223,12 +2226,12 @@ export default function ChessEngineLab() {
                   {hintLevel >= 3 && (
                     <li>
                       <strong>Candidates:</strong>{" "}
-                      {hint.candidates.slice(0, 3).map((c) => moveToString(c.move)).join(", ")}
+                      {hint.candidates.slice(0, 3).map((c) => moveToString(c.move, board)).join(", ")}
                     </li>
                   )}
                   {hintLevel >= 4 && (
                     <li>
-                      <strong>Best:</strong> {moveToString(hint.move)} ({formatScore(hint.score)})
+                      <strong>Best:</strong> {moveToString(hint.move, board)} ({formatScore(hint.score)})
                       — drawn on the board.
                     </li>
                   )}
@@ -2322,7 +2325,7 @@ export default function ChessEngineLab() {
               <ol className="candidates">
                 {telemetry.candidates.slice(0, 3).map((cand, i) => (
                   <li key={i} className={i === 0 ? "chosen" : ""}>
-                    <span className="cand-move">{moveToString(cand.move)}</span>
+                    <span className="cand-move">{moveToString(cand.move, telemetry.board)}</span>
                     <span className="cand-score">{formatScore(cand.score)}</span>
                     {i === 0 && <span className="cand-tag">played</span>}
                   </li>
