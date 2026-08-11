@@ -309,4 +309,59 @@ test("tapered evaluation still counts material first", () => {
   assert.equal(evaluate(initialBoard()), 0);
 });
 
+/* ---------------- Underpromotion ---------------- */
+
+test("a pawn reaching the last rank may become any of the four pieces", () => {
+  // b7 pawn: it can push to b8 or capture on a8, and each is four moves.
+  const board = pos({ e1: "wk", b7: "wp", a8: "br", e8: "bk" });
+  const promos = legalMoves(board, WHITE, EMPTY_CONTEXT).filter((m) => m.promotion);
+  assert.equal(promos.length, 8, "four promotions per destination, two destinations");
+
+  const push = promos.filter((m) => m.toC === 1).map((m) => m.promotion).sort();
+  assert.deepEqual(push, ["wb", "wn", "wq", "wr"], "the quiet push offers all four");
+  const capture = promos.filter((m) => m.toC === 0).map((m) => m.promotion).sort();
+  assert.deepEqual(capture, ["wb", "wn", "wq", "wr"], "so does the capture");
+
+  // The promotion piece must actually land on the board, not a queen anyway.
+  const knight = promos.find((m) => m.promotion === "wn" && m.toC === 1);
+  assert.equal(applyMove(board, knight)[0][1], "wn");
+
+  // A pawn that isn't promoting is still exactly one move.
+  const quiet = pos({ e1: "wk", b5: "wp", e8: "bk" });
+  assert.equal(legalMoves(quiet, WHITE, EMPTY_CONTEXT).filter((m) => m.piece[1] === "p").length, 1);
+});
+
+test("notation names the piece promoted to, not always a queen", () => {
+  const board = pos({ e1: "wk", b7: "wp", a8: "br", e8: "bk" });
+  const promos = legalMoves(board, WHITE, EMPTY_CONTEXT).filter((m) => m.promotion);
+  const notation = promos.map(moveToString).sort();
+  assert.deepEqual(notation, [
+    "b8=B", "b8=N", "b8=Q", "b8=R",
+    "bxa8=B", "bxa8=N", "bxa8=Q", "bxa8=R",
+  ]);
+});
+
+test("underpromotion is findable: the rook that avoids stalemate", () => {
+  // Why underpromotion has to exist at all. Black Ka6 with only a7 to run to;
+  // White Kb4 covers a5 and the b-file squares.
+  //
+  // A queen on b8 covers a7 as well as the whole b-file, so b8=Q leaves Black
+  // with no move and no check — stalemate, and the win is thrown away. A rook
+  // on b8 covers the same file but not the a7 diagonal, so the game goes on a
+  // rook up. Note the rook can never *check* here that the queen wouldn't:
+  // it attacks a strict subset of the queen's squares. Avoiding stalemate is
+  // the entire point.
+  const board = pos({ a6: "bk", b7: "wp", b4: "wk" });
+  const moves = legalMoves(board, WHITE, EMPTY_CONTEXT);
+  const promoted = (piece) => moves.find((m) => m.promotion === "w" + piece && m.toC === 1);
+  assert.ok(promoted("q") && promoted("r"), "both promotions are generated");
+
+  assert.equal(getGameStatus(applyMove(board, promoted("q")), BLACK, EMPTY_CONTEXT), "stalemate");
+  assert.equal(getGameStatus(applyMove(board, promoted("r")), BLACK, EMPTY_CONTEXT), "playing");
+
+  // And the search finds it, which is only possible now the move is generated.
+  const best = bestMove(board, WHITE, 3, EMPTY_CONTEXT);
+  assert.equal(best.move.promotion, "wr", `expected b8=R, got ${moveToString(best.move)}`);
+});
+
 console.log(`\n${passed} tests passed.`);

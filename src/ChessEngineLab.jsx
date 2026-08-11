@@ -19,6 +19,7 @@ import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
 import { summarize, topMistakes, habitReport, criticalMoments } from "./review.js";
 import { targetsForDrag, squareKey } from "./planning.js";
 import { playSound, soundForMove, loadMuted, setMuted, isMuted } from "./sounds.js";
+import { capturedFrom, drawVerdict } from "./material.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -51,11 +52,23 @@ const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthl
 const FUZZ_BY_DEPTH = [0, 0.6, 0.3, 0, 0, 0, 0];
 
 const COLOR_NAME = { w: "White", b: "Black" };
+const PROMOTION_NAMES = { q: "Queen", r: "Rook", b: "Bishop", n: "Knight" };
 // Half the flip: squash shut, swap sides, open again. Matches --flip-ms in the
 // stylesheet — keep the two in step.
 const FLIP_MS = 160;
 
-function statusText(status, turn, thinking, playerColor, vsHuman, flagged) {
+function statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended) {
+  // Resignation and agreement aren't facts about the position — nothing on the
+  // board says the game stopped — so they're carried separately and read first.
+  if (ended) {
+    if (ended.outcome === "agreed") return "Draw agreed.";
+    if (vsHuman) {
+      return `${COLOR_NAME[opposite(ended.winner)]} resigned — ${COLOR_NAME[ended.winner]} wins.`;
+    }
+    return ended.winner === playerColor
+      ? "The engine resigned — you win!"
+      : "You resigned. The engine wins.";
+  }
   if (flagged) {
     if (flagged.outcome === "flagged-draw") {
       return "Out of time — but the win needs material. Draw.";
@@ -125,6 +138,17 @@ export default function ChessEngineLab() {
   const [controlId, setControlId] = useState(DEFAULT_CONTROL);
   const [clocks, setClocks] = useState(() => createClocks(DEFAULT_CONTROL));
   const [flagged, setFlagged] = useState(null); // { outcome, winner }
+  // Endings that aren't on the board: resignation and an agreed draw. Kept
+  // apart from `status` so getGameStatus stays a pure function of the position.
+  const [ended, setEnded] = useState(null); // { outcome, winner }
+  const [drawOffer, setDrawOffer] = useState(null); // hot-seat: { from }
+  const [drawReply, setDrawReply] = useState(null); // what the engine said back
+  // A pawn is on the last rank and the player has to say what it becomes:
+  // { r, c, moves } — four moves that differ only in `promotion`.
+  const [promotionChoice, setPromotionChoice] = useState(null);
+  // The result card over the board. Opens itself when the game ends and can be
+  // dismissed, because the final position is usually the thing you want to see.
+  const [cardOpen, setCardOpen] = useState(false);
   const turnStartRef = useRef(null);
   const [startMode, setStartMode] = useState("standard"); // standard|midgame|endgame
   const [startDifficulty, setStartDifficulty] = useState("balanced");
@@ -330,7 +354,18 @@ export default function ChessEngineLab() {
     );
   }, [board, selected, controlledColor, ctx]);
 
-  const gameOver = status === "checkmate" || status === "stalemate" || !!flagged;
+  const gameOver =
+    status === "checkmate" || status === "stalemate" || !!flagged || !!ended;
+
+  // What each side has taken, and who is up. Derived from the board, so it is
+  // right after an undo or a generated position without any bookkeeping.
+  const captured = useMemo(() => capturedFrom(board), [board]);
+
+  // The result card opens itself the moment the game ends, and closes on a new
+  // game. Dismissing it doesn't touch `gameOver`, so it stays closed.
+  useEffect(() => {
+    setCardOpen(gameOver);
+  }, [gameOver]);
 
   // A counter purely to re-render the clock display; the times themselves are
   // always derived from timestamps, never from how often this fires.
@@ -358,6 +393,104 @@ export default function ChessEngineLab() {
     }
   });
 
+  /**
+   * Commit a move that has already been chosen. Split out from the click
+   * handler so the promotion picker can play the move the player picked
+   * without duplicating any of this — there is still exactly one move path.
+   */
+  const playMove = (move) => {
+    setPromotionChoice(null);
+    setDrawOffer(null);
+    setDrawReply(null);
+    setPast((p) => [
+      ...p,
+      {
+        board, lastMove, telemetry, status, history, coachReport, threats,
+        evalHistory, gradeLog, turn, ctx,
+        yourMoves: yourMovesRef.current,
+      },
+    ]);
+    const next = applyMove(board, move);
+    const afterCtx = nextContext(ctx, move);
+    setCtx(afterCtx);
+    const newStatus = getGameStatus(next, opposite(turn), afterCtx);
+    // Record the ply for the post-game report, capturing the position it was
+    // played in so the review can grade it exactly as it happened.
+    const msLeftAtMove = timed ? liveClock(turn) : null;
+    setPlyLog((p) => [...p, { board, played: move, color: turn, ctx, msLeft: msLeftAtMove }]);
+    // Charge the mover for the time they just used, then hand over the clock.
+    if (timed && turnStartRef.current != null) {
+      const spent = Date.now() - turnStartRef.current;
+      setClocks((c) => addIncrement(tick(c, turn, spent), turn));
+      turnStartRef.current = Date.now();
+    }
+    // Habit tracking is a personal profile — pause it in hot-seat so an
+    // opponent's blunders never land in your lifetime stats.
+    if (!vsHuman) {
+      // Habit detection compares the position before and after your move.
+      // Undone moves stay counted — the habit still happened.
+      recordHabitEvents(
+        analyzeMove({
+          prevBoard: board,
+          nextBoard: next,
+          move,
+          // From a random midgame/endgame there is no opening to judge, so
+          // push past the opening windows in analyzeMove rather than
+          // reporting "brought the queen out early" on move 30.
+          moveNumber: yourMovesRef.current.length + 1 + (scenario ? 50 : 0),
+          previousMoves: yourMovesRef.current,
+          color: playerColor,
+        })
+      );
+      yourMovesRef.current = [...yourMovesRef.current, move];
+    }
+    setBoard(next);
+    setSelected(null);
+    setLastMove(move);
+    announceMove(move, {
+      check: newStatus === "check",
+      over: newStatus === "checkmate" || newStatus === "stalemate",
+    });
+    setStatus(newStatus);
+    setHint(null);
+    setHintLevel(0);
+    setCoachReport(null);
+    setThreats(null);
+    setEvalHistory((h) => [...h, evaluate(next)]);
+    setHistory((h) => [
+      ...h,
+      moveToString(move) +
+        (newStatus === "checkmate" ? "#" : newStatus === "check" ? "+" : ""),
+    ]);
+    // Hand the turn over first, even when the game just ended: `turn` always
+    // means "side to move", so on checkmate it names the player who has no
+    // reply — which is what the status line reads to announce the winner.
+    setTurn(opposite(turn));
+    if (newStatus === "checkmate" || newStatus === "stalemate") {
+      if (!vsHuman) recordGameEnd();
+      return;
+    }
+    // Hot-seat: the other player is sitting right here, so there is nobody to
+    // search for — the worker stays idle until the post-game review.
+    if (vsHuman) return;
+    setThinking(true);
+    workerRef.current.postMessage({
+      type: "move",
+      board: next,
+      color: engineColor,
+      depth: timed
+        ? depthForTime(clocks[engineColor], depthRef.current)
+        : depthRef.current,
+      ctx: afterCtx,
+      fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
+      // In teacher mode, also grade the move just played: analyze the
+      // position it was played *in* (the pre-move board).
+      coach: teacherMode
+        ? { board, color: playerColor, depth: coachDepth, played: move, ctx }
+        : null,
+    });
+  };
+
   const handleSquareClick = (r, c) => {
     if (drawMode) return; // clicks draw, they don't move pieces
     // Any left click wipes the sketch, like on chess.com.
@@ -365,102 +498,31 @@ export default function ChessEngineLab() {
       setUserArrows([]);
       setUserHighlights([]);
     }
+    // While the promotion picker is up it owns the next click: the pawn is
+    // still on the seventh and the move hasn't happened yet, so anything else
+    // would be acting on a position the player is mid-way through leaving.
+    if (promotionChoice) {
+      setPromotionChoice(null);
+      return;
+    }
     if (thinking || gameOver || turn !== controlledColor) return;
 
+    // Promotions arrive as four moves to the same square that differ only in
+    // what the pawn becomes, so the player has to say which — everything else
+    // matches exactly one move.
+    const matches = targets.filter((m) => m.toR === r && m.toC === c);
+    if (matches.length > 1) {
+      setSelected(null);
+      setPromotionChoice({ r, c, moves: matches });
+      return;
+    }
     // Castling can be entered two ways: click the king two squares over (the
     // move already appears as a normal target), or click your own rook — which
     // is easier to hit on a phone than c1 next to b1.
     const move =
-      targets.find((m) => m.toR === r && m.toC === c) ||
-      targets.find((m) => m.castle && m.toR === r && m.rook.fromC === c);
+      matches[0] || targets.find((m) => m.castle && m.toR === r && m.rook.fromC === c);
     if (move) {
-      setPast((p) => [
-        ...p,
-        {
-          board, lastMove, telemetry, status, history, coachReport, threats,
-          evalHistory, gradeLog, turn, ctx,
-          yourMoves: yourMovesRef.current,
-        },
-      ]);
-      const next = applyMove(board, move);
-      const afterCtx = nextContext(ctx, move);
-      setCtx(afterCtx);
-      const newStatus = getGameStatus(next, opposite(turn), afterCtx);
-      // Record the ply for the post-game report, capturing the position it was
-      // played in so the review can grade it exactly as it happened.
-      const msLeftAtMove = timed ? liveClock(turn) : null;
-      setPlyLog((p) => [...p, { board, played: move, color: turn, ctx, msLeft: msLeftAtMove }]);
-      // Charge the mover for the time they just used, then hand over the clock.
-      if (timed && turnStartRef.current != null) {
-        const spent = Date.now() - turnStartRef.current;
-        setClocks((c) => addIncrement(tick(c, turn, spent), turn));
-        turnStartRef.current = Date.now();
-      }
-      // Habit tracking is a personal profile — pause it in hot-seat so an
-      // opponent's blunders never land in your lifetime stats.
-      if (!vsHuman) {
-        // Habit detection compares the position before and after your move.
-        // Undone moves stay counted — the habit still happened.
-        recordHabitEvents(
-          analyzeMove({
-            prevBoard: board,
-            nextBoard: next,
-            move,
-            // From a random midgame/endgame there is no opening to judge, so
-            // push past the opening windows in analyzeMove rather than
-            // reporting "brought the queen out early" on move 30.
-            moveNumber: yourMovesRef.current.length + 1 + (scenario ? 50 : 0),
-            previousMoves: yourMovesRef.current,
-            color: playerColor,
-          })
-        );
-        yourMovesRef.current = [...yourMovesRef.current, move];
-      }
-      setBoard(next);
-      setSelected(null);
-      setLastMove(move);
-      announceMove(move, {
-        check: newStatus === "check",
-        over: newStatus === "checkmate" || newStatus === "stalemate",
-      });
-      setStatus(newStatus);
-      setHint(null);
-      setHintLevel(0);
-      setCoachReport(null);
-      setThreats(null);
-      setEvalHistory((h) => [...h, evaluate(next)]);
-      setHistory((h) => [
-        ...h,
-        moveToString(move) +
-          (newStatus === "checkmate" ? "#" : newStatus === "check" ? "+" : ""),
-      ]);
-      // Hand the turn over first, even when the game just ended: `turn` always
-      // means "side to move", so on checkmate it names the player who has no
-      // reply — which is what the status line reads to announce the winner.
-      setTurn(opposite(turn));
-      if (newStatus === "checkmate" || newStatus === "stalemate") {
-        if (!vsHuman) recordGameEnd();
-        return;
-      }
-      // Hot-seat: the other player is sitting right here, so there is nobody to
-      // search for — the worker stays idle until the post-game review.
-      if (vsHuman) return;
-      setThinking(true);
-      workerRef.current.postMessage({
-        type: "move",
-        board: next,
-        color: engineColor,
-        depth: timed
-          ? depthForTime(clocks[engineColor], depthRef.current)
-          : depthRef.current,
-        ctx: afterCtx,
-        fuzz: FUZZ_BY_DEPTH[depthRef.current] || 0,
-        // In teacher mode, also grade the move just played: analyze the
-        // position it was played *in* (the pre-move board).
-        coach: teacherMode
-          ? { board, color: playerColor, depth: coachDepth, played: move, ctx }
-          : null,
-      });
+      playMove(move);
       return;
     }
 
@@ -537,6 +599,12 @@ export default function ChessEngineLab() {
     setReviewGrades(null);
     setSelected(null);
     setThinking(false);
+    // Taking a move back resumes a game that resignation or agreement had
+    // stopped, so those endings have to go with it.
+    setEnded(null);
+    setDrawOffer(null);
+    setDrawReply(null);
+    setPromotionChoice(null);
     yourMovesRef.current = prev.yourMoves;
   };
 
@@ -582,6 +650,10 @@ export default function ChessEngineLab() {
     setPreviewArrow(null);
     setClocks(createClocks(controlId));
     setFlagged(null);
+    setEnded(null);
+    setDrawOffer(null);
+    setDrawReply(null);
+    setPromotionChoice(null);
     turnStartRef.current = nextTimed ? Date.now() : null;
     setPlyLog([]);
     setReviewGrades(null);
@@ -625,6 +697,66 @@ export default function ChessEngineLab() {
   };
 
   const reset = () => newGame(playerColor);
+
+  /**
+   * End the game without a mate. `controlledColor` is whoever is entitled to
+   * act right now: your colour against the engine, the side to move in
+   * hot-seat — so resigning always gives up on behalf of the right player.
+   */
+  const finishGame = (result) => {
+    if (thinking) {
+      // A search is in flight on a game that no longer exists.
+      workerRef.current?.terminate();
+      workerRef.current = makeWorker();
+      setThinking(false);
+    }
+    setEnded(result);
+    setDrawOffer(null);
+    setSelected(null);
+    setPromotionChoice(null);
+    playSound("gameEnd");
+    if (!vsHuman) recordGameEnd();
+  };
+
+  const resign = () => {
+    if (gameOver) return;
+    finishGame({ outcome: "resigned", winner: opposite(controlledColor) });
+  };
+
+  /**
+   * Offer a draw. Against a human it's a question; against the engine it's
+   * answered immediately from the same evaluation the search uses, which makes
+   * the refusal informative — being told "I'm a pawn up and still playing for
+   * it" is worth more to a learner than a silent no.
+   */
+  const offerDraw = () => {
+    if (gameOver || thinking) return;
+    if (vsHuman) {
+      setDrawOffer({ from: turn });
+      return;
+    }
+    const verdict = drawVerdict(board, engineColor);
+    setDrawReply(verdict.reason);
+    if (verdict.accept) finishGame({ outcome: "agreed", winner: null });
+  };
+
+  /** Hot-seat: the player who was asked answers. */
+  const answerDraw = (accepted) => {
+    setDrawOffer(null);
+    if (accepted) finishGame({ outcome: "agreed", winner: null });
+  };
+
+  // Escape backs out of whatever is on top: the picker first (a pawn is
+  // waiting mid-move), then the result card.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key !== "Escape") return;
+      if (promotionChoice) setPromotionChoice(null);
+      else if (cardOpen) setCardOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [promotionChoice, cardOpen]);
 
   /** Batch-grade every ply of the finished game for the per-colour report. */
   const requestReview = () => {
@@ -793,6 +925,84 @@ export default function ChessEngineLab() {
       return offset(0, slide.rook.fromC - slide.rook.toC);
     }
     return undefined;
+  };
+
+  /**
+   * Where the promotion picker sits: a column of four squares hanging off the
+   * promotion square, in display space. It drops downwards from the top half
+   * of the board and upwards from the bottom half, so it is always on screen
+   * whichever way round the board is.
+   */
+  const promoStyle = ({ r, c }) => {
+    const dr = orientBlack ? 7 - r : r;
+    const dc = orientBlack ? 7 - c : c;
+    const downwards = dr <= 3;
+    return {
+      left: `${dc * 12.5}%`,
+      [downwards ? "top" : "bottom"]: `${(downwards ? dr : 7 - dr) * 12.5}%`,
+      flexDirection: downwards ? "column" : "column-reverse",
+    };
+  };
+
+  /**
+   * How the game ended, in the two pieces the result card needs: a headline
+   * ("You win") and the manner of it ("by checkmate"). Every ending funnels
+   * through here so the card, unlike the status line, never has to know which
+   * of the three ways a game can stop actually happened.
+   */
+  const result = useMemo(() => {
+    if (!gameOver) return null;
+    let winner = null;
+    let how = "";
+    if (ended) {
+      winner = ended.winner;
+      how = ended.outcome === "agreed" ? "by agreement" : "by resignation";
+    } else if (flagged) {
+      winner = flagged.outcome === "flagged-draw" ? null : flagged.winner;
+      how = flagged.outcome === "flagged-draw" ? "on time, without the material to mate" : "on time";
+    } else if (status === "checkmate") {
+      // `turn` is the side with no reply, so the winner is the other one.
+      winner = opposite(turn);
+      how = "by checkmate";
+    } else {
+      how = "by stalemate";
+    }
+    const headline =
+      winner == null
+        ? "Draw"
+        : vsHuman
+          ? `${COLOR_NAME[winner]} wins`
+          : winner === playerColor
+            ? "You win"
+            : "Engine wins";
+    return { headline, how, winner };
+  }, [gameOver, ended, flagged, status, turn, vsHuman, playerColor]);
+
+  // Send focus to the card when it opens, so keyboard users land on it and
+  // Escape is obviously the way out.
+  const cardRef = useRef(null);
+  useEffect(() => {
+    if (cardOpen) cardRef.current?.focus();
+  }, [cardOpen]);
+
+  /** The strip of pieces one colour has taken, with its material lead. */
+  const capturedStrip = (color) => {
+    const taken = captured[color];
+    const lead = color === WHITE ? captured.advantage : -captured.advantage;
+    if (taken.length === 0 && lead <= 0) return <div className="captured" aria-hidden="true" />;
+    return (
+      <div className="captured" aria-label={`Pieces ${COLOR_NAME[color]} has captured`}>
+        {taken.map((type, i) => (
+          <span
+            key={i}
+            className={"captured-piece " + (color === WHITE ? "black-piece" : "white-piece")}
+          >
+            {GLYPHS[opposite(color) + type]}
+          </span>
+        ))}
+        {lead > 0 && <span className="captured-lead">+{lead}</span>}
+      </div>
+    );
   };
 
   /** The board square under a pointer event, in board coordinates. */
@@ -1045,7 +1255,7 @@ export default function ChessEngineLab() {
                role="status" aria-live="polite">
             {settingUp
               ? "Setting up a position…"
-              : statusText(status, turn, thinking, playerColor, vsHuman, flagged)}
+              : statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended)}
             {(thinking || settingUp) && <span className="spinner" aria-hidden="true" />}
           </div>
 
@@ -1081,6 +1291,22 @@ export default function ChessEngineLab() {
               <strong>{scenario.label}</strong> — {scenario.target}
             </p>
           )}
+
+          {drawOffer && (
+            <div className="draw-offer" role="alertdialog" aria-label="Draw offer">
+              <span>
+                {COLOR_NAME[drawOffer.from]} offers a draw. {COLOR_NAME[opposite(drawOffer.from)]},
+                do you accept?
+              </span>
+              <button className="reset" onClick={() => answerDraw(true)}>Accept</button>
+              <button className="reset" onClick={() => answerDraw(false)}>Decline</button>
+            </div>
+          )}
+          {drawReply && !drawOffer && (
+            <p className="draw-reply" role="status">{drawReply}</p>
+          )}
+
+          {capturedStrip(opposite(bottomColor))}
 
           <div
             ref={boardElRef}
@@ -1163,7 +1389,90 @@ export default function ChessEngineLab() {
                 {GLYPHS[drag.piece]}
               </span>
             )}
+
+            {promotionChoice && (
+              <div
+                className="promo-picker"
+                style={promoStyle(promotionChoice)}
+                role="dialog"
+                aria-label="Choose what the pawn becomes"
+                // The board's own pointer handlers would read this as a drag
+                // starting on the square underneath.
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {promotionChoice.moves.map((m) => (
+                  <button
+                    key={m.promotion}
+                    className="promo-option"
+                    autoFocus={m.promotion[1] === "q"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      playMove(m);
+                    }}
+                    aria-label={`Promote to ${PROMOTION_NAMES[m.promotion[1]]}`}
+                    title={PROMOTION_NAMES[m.promotion[1]]}
+                  >
+                    <span
+                      className={
+                        "piece " + (m.promotion[0] === "w" ? "white-piece" : "black-piece")
+                      }
+                    >
+                      {GLYPHS[m.promotion]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {cardOpen && result && (
+              <div
+                className="result-scrim"
+                // Clicking anywhere off the card puts it away — the final
+                // position is usually the thing you actually want to look at.
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  setCardOpen(false);
+                }}
+              >
+                <div
+                  className="result-card"
+                  role="dialog"
+                  aria-label="Game over"
+                  tabIndex={-1}
+                  ref={cardRef}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    className="result-close"
+                    onClick={() => setCardOpen(false)}
+                    aria-label="Dismiss and look at the position"
+                  >
+                    ×
+                  </button>
+                  <p className="result-headline">{result.headline}</p>
+                  <p className="result-how">{result.how}</p>
+                  <div className="result-actions">
+                    <button className="reset" onClick={() => newGame(playerColor)}>
+                      Rematch
+                    </button>
+                    <button
+                      className="reset"
+                      onClick={() => {
+                        setCardOpen(false);
+                        requestReview();
+                      }}
+                      disabled={!!reviewProgress || plyLog.length === 0}
+                    >
+                      Review
+                    </button>
+                  </div>
+                  <p className="muted small">Esc, or click the board, to look at the position.</p>
+                </div>
+              </div>
+            )}
           </div>
+
+          {capturedStrip(bottomColor)}
 
           {teacherMode && boardArrows.length > 0 && (
             <p className="arrow-legend">
@@ -1203,6 +1512,29 @@ export default function ChessEngineLab() {
               Undo move
             </button>
             <button className="reset" onClick={reset}>New game</button>
+            {!gameOver && !settingUp && (
+              <>
+                <button
+                  className="reset"
+                  onClick={offerDraw}
+                  disabled={thinking || !!drawOffer}
+                  title={
+                    vsHuman
+                      ? "Ask your opponent for a draw"
+                      : "Ask the engine for a draw — it answers from its own evaluation"
+                  }
+                >
+                  Offer draw
+                </button>
+                <button
+                  className="reset danger"
+                  onClick={resign}
+                  title={vsHuman ? `${COLOR_NAME[controlledColor]} gives up` : "Give up this game"}
+                >
+                  Resign
+                </button>
+              </>
+            )}
             {timed && (
               <div className="start-picker" role="group" aria-label="Time control">
                 <span className="muted small">Clock</span>
@@ -1338,7 +1670,7 @@ export default function ChessEngineLab() {
             <section className="panel panel-review" aria-label="Coach report">
               <h2>Coach report</h2>
               <p className="review-result">
-                {statusText(status, turn, false, playerColor, true, flagged)}
+                {statusText(status, turn, false, playerColor, true, flagged, ended)}
               </p>
               {!coachReports && (
                 <>
@@ -1476,7 +1808,7 @@ export default function ChessEngineLab() {
             <section className="panel panel-review" aria-label="Game review">
               <h2>Game review</h2>
               <p className="review-result">
-                {statusText(status, turn, false, playerColor, false, flagged)}
+                {statusText(status, turn, false, playerColor, false, flagged, ended)}
               </p>
               {review.accuracy != null ? (
                 <p>

@@ -905,3 +905,176 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .piece-anim { transition: none !important; }
 }
+
+/* ---- Captured pieces ---- */
+
+/* Thin strips above and below the board. They keep their height when empty so
+   the board never jumps as the first piece is taken. */
+.captured {
+  max-width: 560px;
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0.15rem 0.1rem;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+/* Overlapped, the way a capture tray reads — a row of eight pawns shouldn't
+   be as wide as the board. */
+.captured-piece {
+  margin-right: -0.34em;
+}
+.captured-piece:last-of-type { margin-right: 0; }
+
+/* Both colours use the same solid glyph and are told apart only by colour, so
+   the board's palette can't be reused here: off the board there is no light
+   square behind a dark piece, and #16181f on the page background is invisible.
+   These two read as "light piece" and "dark piece" against the page instead. */
+.captured .white-piece {
+  color: #eef0f6;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.captured .black-piece {
+  color: #79839c;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+}
+
+.captured-lead {
+  margin-left: 0.7em;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* ---- Promotion picker ---- */
+
+/* One board square wide, four tall, hanging off the promotion square. */
+.promo-picker {
+  position: absolute;
+  z-index: 15;
+  width: 12.5%;
+  display: flex;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.promo-option {
+  aspect-ratio: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.promo-option:hover,
+.promo-option:focus-visible {
+  background: var(--square-last);
+}
+
+/* The glyph inside sets pointer-events: none, which is what we want — the
+   button takes the click. */
+.promo-option .piece { font-size: clamp(1.2rem, 4.6vmin, 2.2rem); }
+
+/* ---- Draw offers ---- */
+
+.draw-offer,
+.draw-reply {
+  max-width: 560px;
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 0.92rem;
+}
+
+.draw-offer {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.draw-offer .reset { padding: 0.3rem 0.7rem; }
+
+.reset.danger:hover:not(:disabled) { border-color: var(--check-red); }
+
+/* ---- Game-over card ---- */
+
+/* Absolute inside the board rather than fixed to the viewport, so it scales
+   with the board on a phone instead of floating over the whole page. */
+.result-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 16, 0.55);
+  animation: result-in 160ms ease-out;
+}
+
+.result-card {
+  position: relative;
+  width: min(78%, 20rem);
+  padding: 1.1rem 1.25rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  text-align: center;
+}
+
+.result-headline {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.result-how {
+  margin: 0.15rem 0 0.9rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.result-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 0.6rem;
+}
+
+.result-close {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.45rem;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0.15rem 0.3rem;
+  cursor: pointer;
+}
+
+.result-close:hover { color: var(--text); }
+
+@keyframes result-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result-scrim { animation: none; }
+}

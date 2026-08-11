@@ -120,6 +120,15 @@ export const ROOK_DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 const onBoard = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8;
 
 /**
+ * What a pawn may become on the last rank. A queen is right almost every time,
+ * but "almost" is the whole point: underpromoting to a knight is the standard
+ * way to deliver a check a queen cannot, and to a rook to avoid stalemating a
+ * lone king. Generating all four is what makes those moves findable at all.
+ * Queen first so move ordering sees the best candidate early.
+ */
+export const PROMOTION_PIECES = ["q", "r", "b", "n"];
+
+/**
  * A move is a plain object:
  *   { fromR, fromC, toR, toC, piece, captured, promotion }
  * `captured` is the piece code on the target square ("" if none) and
@@ -153,11 +162,24 @@ export function generateMoves(board, color, ctx = EMPTY_CONTEXT) {
         const dir = color === WHITE ? -1 : 1;
         const startRow = color === WHITE ? 6 : 1;
         const lastRow = color === WHITE ? 0 : 7;
-        const promo = (row) => (row === lastRow ? color + "q" : "");
+        /**
+         * Add a pawn move, expanding it into one move per promotion piece when
+         * it lands on the last rank. Everywhere else it is a single move with
+         * an empty `promotion`, exactly as before.
+         */
+        const addPawnMove = (tr, tc) => {
+          if (tr !== lastRow) {
+            addMove(moves, board, r, c, tr, tc);
+            return;
+          }
+          for (const piece of PROMOTION_PIECES) {
+            addMove(moves, board, r, c, tr, tc, color + piece);
+          }
+        };
 
         // One square forward (two from the starting rank), never a capture.
         if (onBoard(r + dir, c) && board[r + dir][c] === "") {
-          addMove(moves, board, r, c, r + dir, c, promo(r + dir));
+          addPawnMove(r + dir, c);
           if (r === startRow && board[r + 2 * dir][c] === "") {
             addMove(moves, board, r, c, r + 2 * dir, c);
           }
@@ -166,7 +188,7 @@ export function generateMoves(board, color, ctx = EMPTY_CONTEXT) {
         for (const dc of [-1, 1]) {
           const tr = r + dir, tc = c + dc;
           if (onBoard(tr, tc) && board[tr][tc] && board[tr][tc][0] !== color) {
-            addMove(moves, board, r, c, tr, tc, promo(tr));
+            addPawnMove(tr, tc);
           }
           // En passant: the target square is empty, so the captured pawn sits
           // beside us rather than where we land. That's why the move records
@@ -555,7 +577,9 @@ export function orderMoves(moves) {
   const priority = (m) => {
     let p = 0;
     if (m.captured) p += 10 * PIECE_VALUES[m.captured[1]] - PIECE_VALUES[m.piece[1]];
-    if (m.promotion) p += PIECE_VALUES.q;
+    // Score the piece actually promoted to, so a knight promotion isn't
+    // searched as though it had won a queen.
+    if (m.promotion) p += PIECE_VALUES[m.promotion[1]];
     // Castling is so often right that trying it early pays for itself in extra
     // alpha-beta cutoffs — but it must still rank below any real capture.
     if (m.castle) p += 50;
@@ -745,7 +769,7 @@ export function moveToString(move) {
   const target = squareName(move.toR, move.toC);
   if (type === "p") {
     const file = capture ? "abcdefgh"[move.fromC] : "";
-    const promo = move.promotion ? "=Q" : "";
+    const promo = move.promotion ? "=" + move.promotion[1].toUpperCase() : "";
     return file + capture + target + promo;
   }
   return type.toUpperCase() + squareName(move.fromR, move.fromC) + capture + target;
