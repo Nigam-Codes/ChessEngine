@@ -1257,3 +1257,38 @@ button {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- Step-through controls beside the board ---- */
+
+/* A compact echo of the move list's controls, sized to the board so it reads
+   as part of it rather than as another panel. */
+.board-nav {
+  max-width: 560px;
+  margin-top: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+/* While reviewing, the box is the thing telling you the board is not live. */
+.board-nav-active {
+  border-color: var(--accent);
+}
+
+.board-nav .move-nav {
+  margin-bottom: 0;
+}
+
+.board-nav .chip {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.85rem;
+}
+
+.board-nav .move-nav-pos {
+  font-size: 0.75rem;
+}

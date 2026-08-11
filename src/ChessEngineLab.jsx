@@ -1198,6 +1198,55 @@ export default function ChessEngineLab() {
   }, [plyLog, currentPly]);
 
   /**
+   * The step-through controls. Rendered in two places — a compact box under
+   * the board, where your eyes are while reviewing, and at the top of the move
+   * list — so this is one definition rather than two that could drift apart.
+   */
+  const moveNav = (label) => (
+    <div className="move-nav" role="group" aria-label={label}>
+      <button
+        className="chip"
+        onClick={() => goToPly(0)}
+        disabled={currentPly === 0}
+        aria-label="Jump to the start"
+        title="Start (Home)"
+      >
+        ⏮
+      </button>
+      <button
+        className="chip"
+        onClick={() => goToPly(currentPly - 1)}
+        disabled={currentPly === 0}
+        aria-label="Previous move"
+        title="Back (←)"
+      >
+        ◀
+      </button>
+      <span className="move-nav-pos">
+        {currentPly} / {plyLog.length}
+      </span>
+      <button
+        className="chip"
+        onClick={() => goToPly(currentPly + 1)}
+        disabled={!viewingHistory}
+        aria-label="Next move"
+        title="Forward (→)"
+      >
+        ▶
+      </button>
+      <button
+        className="chip"
+        onClick={() => goToPly(plyLog.length)}
+        disabled={!viewingHistory}
+        aria-label="Back to the live position"
+        title="Live (End)"
+      >
+        ⏭
+      </button>
+    </div>
+  );
+
+  /**
    * One move in the list: a button that jumps to the position it produced,
    * carrying its review grade when the game has been analysed.
    */
@@ -1792,6 +1841,22 @@ export default function ChessEngineLab() {
           </div>
 
           {capturedStrip(bottomColor)}
+
+          {plyLog.length > 0 && (
+            // The same controls as the move list carries, but beside the
+            // board — which is where you are actually looking while stepping
+            // through a game, and the list can be a long scroll away.
+            <div className={"board-nav" + (viewingHistory ? " board-nav-active" : "")}>
+              {moveNav("Step through the game, beside the board")}
+              {viewingHistory ? (
+                <button className="link-button" onClick={() => goToPly(plyLog.length)}>
+                  Back to the game
+                </button>
+              ) : (
+                <span className="muted small">Live · ← → to review</span>
+              )}
+            </div>
+          )}
 
           {teacherMode && boardArrows.length > 0 && (
             <p className="arrow-legend">
@@ -2413,47 +2478,7 @@ export default function ChessEngineLab() {
                     <span className="opening-eco">{opening.eco}</span>
                   </p>
                 )}
-                <div className="move-nav" role="group" aria-label="Step through the game">
-                  <button
-                    className="chip"
-                    onClick={() => goToPly(0)}
-                    disabled={currentPly === 0}
-                    aria-label="Jump to the start"
-                    title="Start (Home)"
-                  >
-                    ⏮
-                  </button>
-                  <button
-                    className="chip"
-                    onClick={() => goToPly(currentPly - 1)}
-                    disabled={currentPly === 0}
-                    aria-label="Previous move"
-                    title="Back (←)"
-                  >
-                    ◀
-                  </button>
-                  <span className="move-nav-pos">
-                    {currentPly} / {plyLog.length}
-                  </span>
-                  <button
-                    className="chip"
-                    onClick={() => goToPly(currentPly + 1)}
-                    disabled={!viewingHistory}
-                    aria-label="Next move"
-                    title="Forward (→)"
-                  >
-                    ▶
-                  </button>
-                  <button
-                    className="chip"
-                    onClick={() => goToPly(plyLog.length)}
-                    disabled={!viewingHistory}
-                    aria-label="Back to the live position"
-                    title="Live (End)"
-                  >
-                    ⏭
-                  </button>
-                </div>
+                {moveNav("Step through the game")}
                 {viewingHistory && (
                   <p className="viewing-note" role="status">
                     Reviewing move {currentPly} — the board is read-only.{" "}
