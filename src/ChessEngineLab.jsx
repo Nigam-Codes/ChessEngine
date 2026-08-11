@@ -22,6 +22,8 @@ import { playSound, soundForMove, loadMuted, setMuted, isMuted } from "./sounds.
 import { capturedFrom, drawVerdict } from "./material.js";
 import { outcomeFor, TERMINAL, DRAW_REASONS } from "./rules.js";
 import { premoveSquares, resolvePremove } from "./premove.js";
+import { openingForMoves } from "./openings.js";
+import { THEMES, loadTheme, applyTheme } from "./themes.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -194,6 +196,7 @@ export default function ChessEngineLab() {
   // the drag began on an empty square and so is freeform.
   const [drawDests, setDrawDests] = useState(null);
   const [muted, setMutedState] = useState(loadMuted);
+  const [boardTheme, setBoardTheme] = useState(loadTheme);
   // The piece that just moved, rendered one frame at its *old* offset so CSS
   // can slide it home. Cleared as soon as the transition starts.
   const [slide, setSlide] = useState(null);
@@ -921,6 +924,12 @@ export default function ChessEngineLab() {
     if (accepted) finishGame({ outcome: "agreed", winner: null });
   };
 
+  // The theme is a document attribute, so it has to be pushed out to the DOM
+  // rather than rendered — including on first load, for the saved choice.
+  useEffect(() => {
+    applyTheme(boardTheme);
+  }, [boardTheme]);
+
   // Escape backs out of whatever is on top: the picker first (a pawn is
   // waiting mid-move), then the result card.
   useEffect(() => {
@@ -1173,6 +1182,16 @@ export default function ChessEngineLab() {
   // Where the display is in the game, counted in plies. `viewPly` is null when
   // live, which is the same position as the end of the log.
   const currentPly = viewPly === null ? plyLog.length : viewPly;
+
+  /**
+   * The opening, named from the moves played up to whatever position is on
+   * screen — so stepping back through the game walks the name back too.
+   * Keyed on coordinates rather than notation (see openings.js).
+   */
+  const opening = useMemo(() => {
+    const played = plyLog.slice(0, currentPly).map((p) => p.played);
+    return played.length ? openingForMoves(played) : null;
+  }, [plyLog, currentPly]);
 
   /**
    * One move in the list: a button that jumps to the position it produced,
@@ -1843,6 +1862,19 @@ export default function ChessEngineLab() {
                 ))}
               </div>
             )}
+            <div className="start-picker" role="group" aria-label="Board colours">
+              <span className="muted small">Board</span>
+              {THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  className={"chip" + (boardTheme === t.id ? " chip-active" : "")}
+                  onClick={() => setBoardTheme(t.id)}
+                  aria-pressed={boardTheme === t.id}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <button className="reset" onClick={() => setFlipped((f) => !f)} title="Rotate the board 180°">
               Flip board
             </button>
@@ -2315,6 +2347,12 @@ export default function ChessEngineLab() {
               </p>
             ) : (
               <>
+                {opening && (
+                  <p className="opening">
+                    <strong>{opening.name}</strong>{" "}
+                    <span className="opening-eco">{opening.eco}</span>
+                  </p>
+                )}
                 <div className="move-nav" role="group" aria-label="Step through the game">
                   <button
                     className="chip"
