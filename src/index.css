@@ -1078,3 +1078,117 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .result-scrim { animation: none; }
 }
+
+/* ---- Stepping through the game ---- */
+
+/* The five grade colours, shared by the board badge and the move list so a
+   move can never look like a blunder in one place and a mistake in the other.
+   They match the .rc-* tones already used by the review counts. */
+:root {
+  --grade-best: #3ecf74;
+  --grade-good: #8fd6a8;
+  --grade-inaccuracy: #f2c14e;
+  --grade-mistake: #ff9f5a;
+  --grade-blunder: #ff6b6b;
+}
+
+.move-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.5rem;
+}
+
+.move-nav .chip { padding: 0.2rem 0.5rem; }
+
+.move-nav-pos {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin: 0 0.25rem;
+}
+
+.viewing-note {
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--accent);
+  background: var(--bg-panel-2);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* Move-list entries are buttons now, but must still read as a move list
+   rather than a row of controls. */
+.move-cell {
+  background: none;
+  border: none;
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-align: left;
+}
+
+.move-cell:hover { background: var(--bg-panel-2); }
+
+.move-cell-current {
+  background: var(--square-last);
+  font-weight: 700;
+}
+
+.move-mark {
+  margin-left: 0.2em;
+  font-size: 0.85em;
+  font-weight: 700;
+}
+
+.move-best .move-mark { color: var(--grade-best); }
+.move-good .move-mark { color: var(--grade-good); }
+.move-inaccuracy .move-mark { color: var(--grade-inaccuracy); }
+.move-mistake .move-mark { color: var(--grade-mistake); }
+.move-blunder .move-mark { color: var(--grade-blunder); }
+
+.grade-key { margin: 0.5rem 0 0; }
+
+/* The badge on the board sits on the destination square, top-right, the way
+   chess.com marks the move you just stepped onto. */
+.grade-badge {
+  position: absolute;
+  top: 2%;
+  right: 2%;
+  min-width: 1.15em;
+  height: 1.15em;
+  padding: 0 0.15em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: clamp(0.55rem, 2.1vmin, 0.85rem);
+  font-weight: 700;
+  line-height: 1;
+  color: #14161c;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.grade-best { background: var(--grade-best); }
+.grade-good { background: var(--grade-good); }
+.grade-inaccuracy { background: var(--grade-inaccuracy); }
+.grade-mistake { background: var(--grade-mistake); }
+.grade-blunder { background: var(--grade-blunder); }
+
+/* A rewound board should look like a record, not a game in progress. */
+.board.history { box-shadow: inset 0 0 0 3px var(--accent); }
+.board.history .square:has(.piece) { cursor: pointer; }

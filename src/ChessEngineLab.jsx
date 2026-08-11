@@ -15,7 +15,7 @@ import {
   nextContext,
 } from "./engine.js";
 import LearnMode from "./LearnMode.jsx";
-import { classifyMove, threatReport, PIECE_NAMES } from "./coach.js";
+import { classifyMove, threatReport, verdictForLoss, PIECE_NAMES } from "./coach.js";
 import { summarize, topMistakes, habitReport, criticalMoments } from "./review.js";
 import { targetsForDrag, squareKey } from "./planning.js";
 import { playSound, soundForMove, loadMuted, setMuted, isMuted } from "./sounds.js";
@@ -52,6 +52,15 @@ const STRENGTH_LABELS = ["Beginner", "Casual", "Club", "Sharp", "Fierce", "Ruthl
 const FUZZ_BY_DEPTH = [0, 0.6, 0.3, 0, 0, 0, 0];
 
 const COLOR_NAME = { w: "White", b: "Black" };
+// chess.com-style move marks. The buckets come from verdictForLoss in
+// coach.js, so these are a rendering of the existing grades, not a new scale.
+const GRADE_MARKS = {
+  best: "★",
+  good: "✓",
+  inaccuracy: "?!",
+  mistake: "?",
+  blunder: "??",
+};
 const PROMOTION_NAMES = { q: "Queen", r: "Rook", b: "Bishop", n: "Knight" };
 // Half the flip: squash shut, swap sides, open again. Matches --flip-ms in the
 // stylesheet — keep the two in step.
@@ -149,6 +158,11 @@ export default function ChessEngineLab() {
   // The result card over the board. Opens itself when the game ends and can be
   // dismissed, because the final position is usually the thing you want to see.
   const [cardOpen, setCardOpen] = useState(false);
+  // Stepping back through the game. Counted in plies *already played*, so
+  // `viewPly` is an index into plyLog and `null` means "watching the live
+  // game" — distinct from "happen to be on the last ply", so a new move
+  // doesn't strand you in history.
+  const [viewPly, setViewPly] = useState(null);
   const turnStartRef = useRef(null);
   const [startMode, setStartMode] = useState("standard"); // standard|midgame|endgame
   const [startDifficulty, setStartDifficulty] = useState("balanced");
@@ -305,6 +319,7 @@ export default function ChessEngineLab() {
         turnStartRef.current = Date.now();
       }
       setTelemetry(result);
+      setViewPly(null); // the engine moved; the live game is the thing to show
       if (msg.coach) {
         setCoachReport(msg.coach);
         if (msg.coach.playedScore != null && msg.coach.best) {
@@ -357,9 +372,79 @@ export default function ChessEngineLab() {
   const gameOver =
     status === "checkmate" || status === "stalemate" || !!flagged || !!ended;
 
+  /* ---------------- Stepping through the game ---------------- */
+
+  // plyLog[i].board is the position *before* ply i, so plyLog[i] is exactly
+  // "after i plies" — which makes viewPly both a ply count and an index.
+  const viewingHistory = viewPly !== null && viewPly < plyLog.length;
+  const shownBoard = viewingHistory ? plyLog[viewPly].board : board;
+  // The move that produced the position on screen, so the from/to highlight
+  // follows you back through the game.
+  const shownLastMove = viewingHistory
+    ? viewPly > 0
+      ? plyLog[viewPly - 1].played
+      : null
+    : lastMove;
+
+  const goToPly = useCallback(
+    (n) => {
+      const total = plyLog.length;
+      const clamped = Math.max(0, Math.min(total, n));
+      setViewPly(clamped >= total ? null : clamped);
+      setSelected(null);
+      setPromotionChoice(null);
+    },
+    [plyLog.length]
+  );
+
+  // ←/→ walk the game, Home/End jump to the ends. Ignored while typing, and
+  // while the picker is up — Escape owns that.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (promotionChoice) return;
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const current = viewPly === null ? plyLog.length : viewPly;
+      if (e.key === "ArrowLeft") goToPly(current - 1);
+      else if (e.key === "ArrowRight") goToPly(current + 1);
+      else if (e.key === "Home") goToPly(0);
+      else if (e.key === "End") goToPly(plyLog.length);
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goToPly, viewPly, plyLog.length, promotionChoice]);
+
+  /**
+   * Grades from the post-game review, keyed by the ply they belong to. The
+   * review already computes a centipawn loss per ply; running it through the
+   * same verdictForLoss the live coach uses means a move can never be a
+   * "Mistake" on the board and an "Inaccuracy" in the panel.
+   */
+  const gradeByPly = useMemo(() => {
+    if (!reviewGrades) return null;
+    const map = new Map();
+    for (const g of reviewGrades) map.set(g.ply, { ...verdictForLoss(g.loss), ...g });
+    return map;
+  }, [reviewGrades]);
+
+  // The badge to draw on the board: the grade of the move that just landed,
+  // sitting on the square it landed on.
+  const shownBadge = useMemo(() => {
+    if (!gradeByPly) return null;
+    const played = viewingHistory ? viewPly : plyLog.length;
+    if (played === 0) return null;
+    const grade = gradeByPly.get(played - 1);
+    if (!grade) return null;
+    const move = plyLog[played - 1].played;
+    return { r: move.toR, c: move.toC, bucket: grade.bucket, verdict: grade.verdict };
+  }, [gradeByPly, viewingHistory, viewPly, plyLog]);
+
   // What each side has taken, and who is up. Derived from the board, so it is
-  // right after an undo or a generated position without any bookkeeping.
-  const captured = useMemo(() => capturedFrom(board), [board]);
+  // right after an undo or a generated position without any bookkeeping — and
+  // it follows you back through the game for free.
+  const captured = useMemo(() => capturedFrom(shownBoard), [shownBoard]);
 
   // The result card opens itself the moment the game ends, and closes on a new
   // game. Dismissing it doesn't touch `gameOver`, so it stays closed.
@@ -399,6 +484,7 @@ export default function ChessEngineLab() {
    * without duplicating any of this — there is still exactly one move path.
    */
   const playMove = (move) => {
+    setViewPly(null); // playing on always snaps back to the live game
     setPromotionChoice(null);
     setDrawOffer(null);
     setDrawReply(null);
@@ -505,6 +591,13 @@ export default function ChessEngineLab() {
       setPromotionChoice(null);
       return;
     }
+    // A rewound board is a record, not a game. Clicking it returns to the
+    // live position rather than doing nothing, which is what you want after
+    // stepping back to check something.
+    if (viewingHistory) {
+      goToPly(plyLog.length);
+      return;
+    }
     if (thinking || gameOver || turn !== controlledColor) return;
 
     // Promotions arrive as four moves to the same square that differ only in
@@ -605,6 +698,7 @@ export default function ChessEngineLab() {
     setDrawOffer(null);
     setDrawReply(null);
     setPromotionChoice(null);
+    setViewPly(null);
     yourMovesRef.current = prev.yourMoves;
   };
 
@@ -654,6 +748,7 @@ export default function ChessEngineLab() {
     setDrawOffer(null);
     setDrawReply(null);
     setPromotionChoice(null);
+    setViewPly(null);
     turnStartRef.current = nextTimed ? Date.now() : null;
     setPlyLog([]);
     setReviewGrades(null);
@@ -780,10 +875,18 @@ export default function ChessEngineLab() {
   // Eval bar: 50% is equal; each pawn of advantage shifts it ~5%.
   const whitePct = Math.max(3, Math.min(97, 50 + staticEval / 20));
 
+  // Each cell carries the ply it represents, so clicking it can jump straight
+  // to the position that move produced.
   const moveRows = useMemo(() => {
     const rows = [];
     for (let i = 0; i < history.length; i += 2) {
-      rows.push({ n: i / 2 + 1, white: history[i], black: history[i + 1] });
+      rows.push({
+        n: i / 2 + 1,
+        white: history[i],
+        black: history[i + 1],
+        whitePly: i,
+        blackPly: i + 1,
+      });
     }
     return rows;
   }, [history]);
@@ -985,6 +1088,33 @@ export default function ChessEngineLab() {
     if (cardOpen) cardRef.current?.focus();
   }, [cardOpen]);
 
+  // Where the display is in the game, counted in plies. `viewPly` is null when
+  // live, which is the same position as the end of the log.
+  const currentPly = viewPly === null ? plyLog.length : viewPly;
+
+  /**
+   * One move in the list: a button that jumps to the position it produced,
+   * carrying its review grade when the game has been analysed.
+   */
+  const moveCell = (text, ply) => {
+    if (!text) return "";
+    const grade = gradeByPly?.get(ply);
+    return (
+      <button
+        className={
+          "move-cell" +
+          (currentPly === ply + 1 ? " move-cell-current" : "") +
+          (grade ? " move-" + grade.bucket : "")
+        }
+        onClick={() => goToPly(ply + 1)}
+        title={grade ? `${grade.verdict} — best was ${grade.bestStr}` : "Jump to this move"}
+      >
+        {text}
+        {grade && <span className="move-mark">{GRADE_MARKS[grade.bucket]}</span>}
+      </button>
+    );
+  };
+
   /** The strip of pieces one colour has taken, with its material lead. */
   const capturedStrip = (color) => {
     const taken = captured[color];
@@ -1032,7 +1162,7 @@ export default function ChessEngineLab() {
     if (!drawing && e.button === 0 && start) {
       const piece = board[start.r][start.c];
       const yours = piece && piece[0] === controlledColor;
-      if (yours && !thinking && !gameOver && !settingUp && turn === controlledColor) {
+      if (yours && !thinking && !gameOver && !settingUp && !viewingHistory && turn === controlledColor) {
         // Deliberately *not* capturing the pointer here: capturing on
         // pointer-down retargets the following click to the board, which
         // silently breaks click-to-move. Capture only once the pointer
@@ -1314,7 +1444,8 @@ export default function ChessEngineLab() {
               "board" +
               (blindfold ? " blindfold" : "") +
               (drawMode ? " drawing" : "") +
-              (flipping ? " flipping" : "")
+              (flipping ? " flipping" : "") +
+              (viewingHistory ? " history" : "")
             }
             role="grid"
             aria-label={`Board, you play ${playerColor === WHITE ? "White" : "Black"}`}
@@ -1328,23 +1459,30 @@ export default function ChessEngineLab() {
                 // Display coordinates follow the orientation; game logic never flips.
                 const r = orientBlack ? 7 - dr : dr;
                 const c = orientBlack ? 7 - dc : dc;
-                const piece = board[r][c];
+                const piece = shownBoard[r][c];
                 const dark = (r + c) % 2 === 1;
-                const isSelected = selected && selected.r === r && selected.c === c;
+                const isSelected =
+                  !viewingHistory && selected && selected.r === r && selected.c === c;
+                // Coaching overlays describe the live position, so they are
+                // meaningless — and misleading — over a rewound board.
                 const isTarget =
-                  targets.some((m) => m.toR === r && m.toC === c) ||
-                  (drawDests ? drawDests.has(squareKey(r, c)) : false);
+                  !viewingHistory &&
+                  (targets.some((m) => m.toR === r && m.toC === c) ||
+                    (drawDests ? drawDests.has(squareKey(r, c)) : false));
                 const isLast =
-                  lastMove &&
-                  ((lastMove.fromR === r && lastMove.fromC === c) ||
-                    (lastMove.toR === r && lastMove.toC === c));
+                  shownLastMove &&
+                  ((shownLastMove.fromR === r && shownLastMove.fromC === c) ||
+                    (shownLastMove.toR === r && shownLastMove.toC === c));
+                const badge = shownBadge && shownBadge.r === r && shownBadge.c === c
+                  ? shownBadge
+                  : null;
                 const classes = [
                   "square",
                   dark ? "dark" : "light",
                   isSelected ? "selected" : "",
                   isLast ? "last-move" : "",
-                  threatSquares.has(`${r}-${c}`) ? "threat" : "",
-                  hintSquares.has(`${r}-${c}`) ? "hint" : "",
+                  !viewingHistory && threatSquares.has(`${r}-${c}`) ? "threat" : "",
+                  !viewingHistory && hintSquares.has(`${r}-${c}`) ? "hint" : "",
                   userHighlights.includes(`${r}-${c}`) ? "user-hl" : "",
                 ].join(" ");
                 return (
@@ -1361,12 +1499,17 @@ export default function ChessEngineLab() {
                         className={
                           "piece " +
                           (piece[0] === "w" ? "white-piece" : "black-piece") +
-                          (slide ? " piece-anim" : "") +
+                          (slide && !viewingHistory ? " piece-anim" : "") +
                           (drag && drag.from.r === r && drag.from.c === c ? " piece-dragging" : "")
                         }
-                        style={slideStyle(r, c)}
+                        style={viewingHistory ? undefined : slideStyle(r, c)}
                       >
                         {GLYPHS[piece]}
+                      </span>
+                    )}
+                    {badge && (
+                      <span className={"grade-badge grade-" + badge.bucket} title={badge.verdict}>
+                        {GRADE_MARKS[badge.bucket]}
                       </span>
                     )}
                     {isTarget && <span className={"dot" + (piece ? " dot-capture" : "")} aria-hidden="true" />}
@@ -2062,17 +2205,73 @@ export default function ChessEngineLab() {
                   : "No moves yet — the engine opens as White."}
               </p>
             ) : (
-              <table className="move-list">
-                <tbody>
-                  {moveRows.map((row) => (
-                    <tr key={row.n}>
-                      <td className="move-num">{row.n}.</td>
-                      <td>{row.white}</td>
-                      <td>{row.black || ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <>
+                <div className="move-nav" role="group" aria-label="Step through the game">
+                  <button
+                    className="chip"
+                    onClick={() => goToPly(0)}
+                    disabled={currentPly === 0}
+                    aria-label="Jump to the start"
+                    title="Start (Home)"
+                  >
+                    ⏮
+                  </button>
+                  <button
+                    className="chip"
+                    onClick={() => goToPly(currentPly - 1)}
+                    disabled={currentPly === 0}
+                    aria-label="Previous move"
+                    title="Back (←)"
+                  >
+                    ◀
+                  </button>
+                  <span className="move-nav-pos">
+                    {currentPly} / {plyLog.length}
+                  </span>
+                  <button
+                    className="chip"
+                    onClick={() => goToPly(currentPly + 1)}
+                    disabled={!viewingHistory}
+                    aria-label="Next move"
+                    title="Forward (→)"
+                  >
+                    ▶
+                  </button>
+                  <button
+                    className="chip"
+                    onClick={() => goToPly(plyLog.length)}
+                    disabled={!viewingHistory}
+                    aria-label="Back to the live position"
+                    title="Live (End)"
+                  >
+                    ⏭
+                  </button>
+                </div>
+                {viewingHistory && (
+                  <p className="viewing-note" role="status">
+                    Reviewing move {currentPly} — the board is read-only.{" "}
+                    <button className="link-button" onClick={() => goToPly(plyLog.length)}>
+                      Back to the game
+                    </button>
+                  </p>
+                )}
+                <table className="move-list">
+                  <tbody>
+                    {moveRows.map((row) => (
+                      <tr key={row.n}>
+                        <td className="move-num">{row.n}.</td>
+                        <td>{moveCell(row.white, row.whitePly)}</td>
+                        <td>{moveCell(row.black, row.blackPly)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {gradeByPly && (
+                  <p className="muted small grade-key">
+                    ★ best · ✓ good · ?! inaccuracy · ? mistake · ?? blunder
+                  </p>
+                )}
+              </>
             )}
           </section>
         </aside>
