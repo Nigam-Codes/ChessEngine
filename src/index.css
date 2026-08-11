@@ -1192,3 +1192,21 @@ button {
 /* A rewound board should look like a record, not a game in progress. */
 .board.history { box-shadow: inset 0 0 0 3px var(--accent); }
 .board.history .square:has(.piece) { cursor: pointer; }
+
+/* ---- Premove ---- */
+
+/* Distinct from the last-move highlight: this move has not happened, and may
+   never happen, so it reads as pending rather than done. */
+.square.premove {
+  box-shadow: inset 0 0 0 100vmax rgba(180, 130, 255, 0.42);
+}
+
+.premove-note {
+  max-width: 560px;
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid #b482ff;
+  background: var(--bg-panel);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}

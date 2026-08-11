@@ -21,6 +21,7 @@ import { targetsForDrag, squareKey } from "./planning.js";
 import { playSound, soundForMove, loadMuted, setMuted, isMuted } from "./sounds.js";
 import { capturedFrom, drawVerdict } from "./material.js";
 import { outcomeFor, TERMINAL, DRAW_REASONS } from "./rules.js";
+import { premoveSquares, resolvePremove } from "./premove.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -167,6 +168,9 @@ export default function ChessEngineLab() {
   // game" — distinct from "happen to be on the last ply", so a new move
   // doesn't strand you in history.
   const [viewPly, setViewPly] = useState(null);
+  // A move queued while the engine is still thinking, played the instant it
+  // becomes your turn — how blitz actually feels. { from: {r,c}, to: {r,c} }.
+  const [premove, setPremove] = useState(null);
   const turnStartRef = useRef(null);
   const [startMode, setStartMode] = useState("standard"); // standard|midgame|endgame
   const [startDifficulty, setStartDifficulty] = useState("balanced");
@@ -388,6 +392,13 @@ export default function ChessEngineLab() {
     );
   }, [board, selected, controlledColor, ctx]);
 
+  // Where a premove may be aimed: geometry, not legality. See premove.js for
+  // why ordinary move generation is the wrong tool here.
+  const premoveTargets = useMemo(
+    () => (selected ? premoveSquares(board, selected) : new Set()),
+    [board, selected]
+  );
+
   const gameOver = TERMINAL.has(status) || !!flagged || !!ended;
 
   /* ---------------- Stepping through the game ---------------- */
@@ -503,6 +514,7 @@ export default function ChessEngineLab() {
    */
   const playMove = (move) => {
     setViewPly(null); // playing on always snaps back to the live game
+    setPremove(null);
     setPromotionChoice(null);
     setDrawOffer(null);
     setDrawReply(null);
@@ -594,6 +606,34 @@ export default function ChessEngineLab() {
     });
   };
 
+  // True while the engine is searching and the next click should be banked
+  // rather than played.
+  const queueingPremove =
+    thinking && !vsHuman && !gameOver && !settingUp && turn !== controlledColor;
+
+  /**
+   * Release a queued premove the moment it is your turn again.
+   *
+   * This runs as an effect rather than at the end of the worker's callback
+   * because playMove reads the current board, context and ply log from the
+   * render it was created in — inside the callback those are all still the
+   * pre-reply values. Waiting a render means it sees the position the engine
+   * actually produced, which is the whole correctness question here.
+   */
+  useEffect(() => {
+    if (!premove || thinking || gameOver || settingUp || turn !== controlledColor) return;
+    const move = resolvePremove(board, turn, ctx, premove);
+    setPremove(null);
+    if (!move) {
+      // The engine didn't play what you assumed. Say so rather than guessing.
+      playSound("illegal");
+      return;
+    }
+    playMove(move);
+    // playMove is rebuilt every render; depending on it here would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [premove, thinking, gameOver, settingUp, turn, controlledColor, board, ctx]);
+
   const handleSquareClick = (r, c) => {
     if (drawMode) return; // clicks draw, they don't move pieces
     // Any left click wipes the sketch, like on chess.com.
@@ -613,6 +653,26 @@ export default function ChessEngineLab() {
     // stepping back to check something.
     if (viewingHistory) {
       goToPly(plyLog.length);
+      return;
+    }
+    // Premove: while the engine is searching, a click queues a move instead of
+    // playing one. Only against the engine — in hot-seat the other player is
+    // sitting right here and there is no wait to fill.
+    if (queueingPremove) {
+      if (selected && premoveTargets.has(`${r}-${c}`)) {
+        setPremove({ from: { ...selected }, to: { r, c } });
+        setSelected(null);
+        return;
+      }
+      // Anything else re-aims: picking a different piece, or clicking away,
+      // drops whatever was queued rather than leaving a stale move armed.
+      setPremove(null);
+      const own = board[r][c];
+      setSelected(
+        own && own[0] === controlledColor && !(selected?.r === r && selected?.c === c)
+          ? { r, c }
+          : null
+      );
       return;
     }
     if (thinking || gameOver || turn !== controlledColor) return;
@@ -716,6 +776,7 @@ export default function ChessEngineLab() {
     setDrawReply(null);
     setPromotionChoice(null);
     setViewPly(null);
+    setPremove(null);
     yourMovesRef.current = prev.yourMoves;
   };
 
@@ -766,6 +827,7 @@ export default function ChessEngineLab() {
     setDrawReply(null);
     setPromotionChoice(null);
     setViewPly(null);
+    setPremove(null);
     turnStartRef.current = nextTimed ? Date.now() : null;
     setPlyLog([]);
     setReviewGrades(null);
@@ -823,6 +885,7 @@ export default function ChessEngineLab() {
       setThinking(false);
     }
     setEnded(result);
+    setPremove(null);
     setDrawOffer(null);
     setSelected(null);
     setPromotionChoice(null);
@@ -1181,7 +1244,11 @@ export default function ChessEngineLab() {
     if (!drawing && e.button === 0 && start) {
       const piece = board[start.r][start.c];
       const yours = piece && piece[0] === controlledColor;
-      if (yours && !thinking && !gameOver && !settingUp && !viewingHistory && turn === controlledColor) {
+      // Dragging is allowed on your turn, and also while the engine thinks —
+      // dropping then queues a premove, because it lands in handleSquareClick
+      // exactly as a click does.
+      const canGrab = queueingPremove || (!thinking && !gameOver && !settingUp && turn === controlledColor);
+      if (yours && canGrab && !viewingHistory) {
         // Deliberately *not* capturing the pointer here: capturing on
         // pointer-down retargets the following click to the board, which
         // silently breaks click-to-move. Capture only once the pointer
@@ -1198,6 +1265,9 @@ export default function ChessEngineLab() {
     }
 
     if (!drawing) return;
+    // Right-click is how a premove is taken back, the same as on chess.com.
+    // Drawing an arrow with one is a side effect of that, not a conflict.
+    if (premove) setPremove(null);
     const sq = start;
     if (!sq) return;
     e.preventDefault();
@@ -1441,6 +1511,17 @@ export default function ChessEngineLab() {
             </p>
           )}
 
+          {premove && (
+            <p className="premove-note" role="status">
+              Premove queued: {squareName(premove.from.r, premove.from.c)} →{" "}
+              {squareName(premove.to.r, premove.to.c)}. It plays the moment it's your
+              turn, or is dropped if the engine makes it illegal.{" "}
+              <button className="link-button" onClick={() => setPremove(null)}>
+                Cancel
+              </button>
+            </p>
+          )}
+
           {drawOffer && (
             <div className="draw-offer" role="alertdialog" aria-label="Draw offer">
               <span>
@@ -1484,10 +1565,18 @@ export default function ChessEngineLab() {
                   !viewingHistory && selected && selected.r === r && selected.c === c;
                 // Coaching overlays describe the live position, so they are
                 // meaningless — and misleading — over a rewound board.
+                // While the engine thinks, the dots show where a premove may
+                // be aimed rather than where you may move right now.
                 const isTarget =
                   !viewingHistory &&
-                  (targets.some((m) => m.toR === r && m.toC === c) ||
+                  ((queueingPremove
+                    ? premoveTargets.has(`${r}-${c}`)
+                    : targets.some((m) => m.toR === r && m.toC === c)) ||
                     (drawDests ? drawDests.has(squareKey(r, c)) : false));
+                const isPremove =
+                  premove &&
+                  ((premove.from.r === r && premove.from.c === c) ||
+                    (premove.to.r === r && premove.to.c === c));
                 const isLast =
                   shownLastMove &&
                   ((shownLastMove.fromR === r && shownLastMove.fromC === c) ||
@@ -1500,6 +1589,7 @@ export default function ChessEngineLab() {
                   dark ? "dark" : "light",
                   isSelected ? "selected" : "",
                   isLast ? "last-move" : "",
+                  isPremove ? "premove" : "",
                   !viewingHistory && threatSquares.has(`${r}-${c}`) ? "threat" : "",
                   !viewingHistory && hintSquares.has(`${r}-${c}`) ? "hint" : "",
                   userHighlights.includes(`${r}-${c}`) ? "user-hl" : "",
