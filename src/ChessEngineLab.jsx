@@ -20,6 +20,7 @@ import { summarize, topMistakes, habitReport, criticalMoments } from "./review.j
 import { targetsForDrag, squareKey } from "./planning.js";
 import { playSound, soundForMove, loadMuted, setMuted, isMuted } from "./sounds.js";
 import { capturedFrom, drawVerdict } from "./material.js";
+import { outcomeFor, TERMINAL, DRAW_REASONS } from "./rules.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -94,6 +95,9 @@ function statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended
     return turn !== playerColor ? "Checkmate — you win!" : "Checkmate — the engine wins.";
   }
   if (status === "stalemate") return "Stalemate — draw.";
+  if (status === "insufficient") return "Draw — neither side has enough material to mate.";
+  if (status === "fifty-move") return "Draw — fifty moves with no pawn move or capture.";
+  if (status === "repetition") return "Draw — the same position three times.";
   if (thinking) return "Engine is thinking…";
   if (vsHuman) {
     return status === "check"
@@ -214,6 +218,8 @@ export default function ChessEngineLab() {
   playerColorRef.current = playerColor;
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
+  const plyLogRef = useRef(plyLog);
+  plyLogRef.current = plyLog;
   const timedRef = useRef(timed);
   timedRef.current = timed;
   // Your moves so far this game, for opening-habit detection.
@@ -296,7 +302,8 @@ export default function ChessEngineLab() {
         ctxRef.current = p.ctx;
         setTurn(p.turn);
         setScenario({ label: p.label, target: p.target });
-        setStatus(getGameStatus(p.board, p.turn, p.ctx));
+        setPlyLog([]);
+        setStatus(outcomeFor({ board: p.board, turn: p.turn, ctx: p.ctx, plyLog: [] }));
         return;
       }
       if (msg.type === "review-progress") {
@@ -335,15 +342,27 @@ export default function ChessEngineLab() {
       const next = applyMove(boardRef.current, result.move);
       const afterCtx = nextContext(ctxRef.current, result.move);
       setCtx(afterCtx);
-      const newStatus = getGameStatus(next, pc, afterCtx);
-      if (newStatus === "checkmate" || newStatus === "stalemate") recordGameEnd();
+      // The engine's reply is a ply of this game like any other. It has to be
+      // logged: without it plyLog holds only half the game, which would make
+      // repetition undetectable and the move-list rewind skip every reply.
+      const log = [
+        ...plyLogRef.current,
+        {
+          board: boardRef.current,
+          played: result.move,
+          color: opposite(pc),
+          ctx: ctxRef.current,
+          msLeft: null,
+        },
+      ];
+      setPlyLog(log);
+      const newStatus = outcomeFor({ board: next, turn: pc, ctx: afterCtx, plyLog: log });
+      const over = TERMINAL.has(newStatus);
+      if (over) recordGameEnd();
       setBoard(next);
       setStatus(newStatus);
       setLastMove(result.move);
-      announceMove(result.move, {
-        check: newStatus === "check",
-        over: newStatus === "checkmate" || newStatus === "stalemate",
-      });
+      announceMove(result.move, { check: newStatus === "check", over });
       setTurn(pc);
       setThreats(threatReport(next, pc));
       setEvalHistory((h) => [...h, evaluate(next)]);
@@ -369,8 +388,7 @@ export default function ChessEngineLab() {
     );
   }, [board, selected, controlledColor, ctx]);
 
-  const gameOver =
-    status === "checkmate" || status === "stalemate" || !!flagged || !!ended;
+  const gameOver = TERMINAL.has(status) || !!flagged || !!ended;
 
   /* ---------------- Stepping through the game ---------------- */
 
@@ -499,11 +517,13 @@ export default function ChessEngineLab() {
     const next = applyMove(board, move);
     const afterCtx = nextContext(ctx, move);
     setCtx(afterCtx);
-    const newStatus = getGameStatus(next, opposite(turn), afterCtx);
     // Record the ply for the post-game report, capturing the position it was
-    // played in so the review can grade it exactly as it happened.
+    // played in so the review can grade it exactly as it happened. The status
+    // is worked out *after*, because repetition is a fact about the whole log.
     const msLeftAtMove = timed ? liveClock(turn) : null;
-    setPlyLog((p) => [...p, { board, played: move, color: turn, ctx, msLeft: msLeftAtMove }]);
+    const log = [...plyLog, { board, played: move, color: turn, ctx, msLeft: msLeftAtMove }];
+    setPlyLog(log);
+    const newStatus = outcomeFor({ board: next, turn: opposite(turn), ctx: afterCtx, plyLog: log });
     // Charge the mover for the time they just used, then hand over the clock.
     if (timed && turnStartRef.current != null) {
       const spent = Date.now() - turnStartRef.current;
@@ -533,10 +553,7 @@ export default function ChessEngineLab() {
     setBoard(next);
     setSelected(null);
     setLastMove(move);
-    announceMove(move, {
-      check: newStatus === "check",
-      over: newStatus === "checkmate" || newStatus === "stalemate",
-    });
+    announceMove(move, { check: newStatus === "check", over: TERMINAL.has(newStatus) });
     setStatus(newStatus);
     setHint(null);
     setHintLevel(0);
@@ -552,7 +569,7 @@ export default function ChessEngineLab() {
     // means "side to move", so on checkmate it names the player who has no
     // reply — which is what the status line reads to announce the winner.
     setTurn(opposite(turn));
-    if (newStatus === "checkmate" || newStatus === "stalemate") {
+    if (TERMINAL.has(newStatus)) {
       if (!vsHuman) recordGameEnd();
       return;
     }
@@ -1068,7 +1085,9 @@ export default function ChessEngineLab() {
       winner = opposite(turn);
       how = "by checkmate";
     } else {
-      how = "by stalemate";
+      // Every remaining terminal status is a draw, and rules.js owns the
+      // wording so the card and the status line can't drift apart.
+      how = DRAW_REASONS[status] || "by agreement";
     }
     const headline =
       winner == null

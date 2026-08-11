@@ -64,11 +64,12 @@ export function cloneBoard(board) {
 export const EMPTY_CONTEXT = Object.freeze({
   rights: Object.freeze({ wk: false, wq: false, bk: false, bq: false }),
   ep: null,
+  half: 0,
 });
 
 /** Full castling rights and no en-passant target — the game start. */
 export function initialContext() {
-  return { rights: { wk: true, wq: true, bk: true, bq: true }, ep: null };
+  return { rights: { wk: true, wq: true, bk: true, bq: true }, ep: null, half: 0 };
 }
 
 // Which right a rook sitting on each corner belongs to.
@@ -99,7 +100,13 @@ export function nextContext(ctx, move) {
   const doubleStep = move.piece[1] === "p" && Math.abs(move.toR - move.fromR) === 2;
   const ep = doubleStep ? { r: (move.fromR + move.toR) / 2, c: move.fromC } : null;
 
-  return { rights, ep };
+  // The halfmove clock for the fifty-move rule. Any pawn move or capture is
+  // irreversible and resets it; everything else brings the draw a step closer.
+  // `?? 0` so contexts built by hand before this existed still work.
+  const irreversible = move.piece[1] === "p" || !!move.captured;
+  const half = irreversible ? 0 : (ctx.half ?? 0) + 1;
+
+  return { rights, ep, half };
 }
 
 /* ------------------------------------------------------------------ */
