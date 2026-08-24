@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node tests/engine.test.js && node tests/coach.test.js && node tests/habits.test.js && node tests/drills.test.js && node tests/review.test.js && node tests/positions.test.js && node tests/planning.test.js && node tests/clock.test.js && node tests/sounds.test.js && node tests/material.test.js && node tests/rules.test.js && node tests/premove.test.js && node tests/openings.test.js && node tests/share.test.js && node tests/walkthrough.test.js",
-    "test:browser": "node tests/browser/core.mjs && node tests/browser/walkthrough.mjs"
+    "test:browser": "node tests/browser/core.mjs && node tests/browser/learn.mjs && node tests/browser/feel.mjs && node tests/browser/sketch.mjs && node tests/browser/castling.mjs && node tests/browser/hotseat.mjs && node tests/browser/random.mjs && node tests/browser/blitz.mjs && node tests/browser/promotion.mjs && node tests/browser/history.mjs && node tests/browser/draws.mjs && node tests/browser/premove.mjs && node tests/browser/themes.mjs && node tests/browser/sharecard.mjs && node tests/browser/walkthrough.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
