@@ -70,6 +70,9 @@ self.onmessage = (event) => {
           loss: lossFor(g.bestScore, g.playedScore, ply.color),
           playedStr: moveToString(ply.played, ply.board),
           bestStr: moveToString(g.best, ply.board),
+          // The move itself, not just its name: the guided walkthrough needs
+          // it to say what the move *does* and to draw it on the board.
+          best: g.best,
           playedScore: g.playedScore,
           bestScore: g.bestScore,
         });

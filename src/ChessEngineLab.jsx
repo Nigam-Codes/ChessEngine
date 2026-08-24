@@ -25,6 +25,7 @@ import { premoveSquares, resolvePremove } from "./premove.js";
 import { openingForMoves } from "./openings.js";
 import { THEMES, loadTheme, applyTheme } from "./themes.js";
 import { cardModel, drawCard, CARD_WIDTH, CARD_HEIGHT } from "./share.js";
+import { buildWalkthrough } from "./walkthrough.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -174,6 +175,8 @@ export default function ChessEngineLab() {
   // A move queued while the engine is still thinking, played the instant it
   // becomes your turn — how blitz actually feels. { from: {r,c}, to: {r,c} }.
   const [premove, setPremove] = useState(null);
+  // Which step of the guided post-mortem is showing, or null when it is closed.
+  const [walkStep, setWalkStep] = useState(null);
   const turnStartRef = useRef(null);
   const [startMode, setStartMode] = useState("standard"); // standard|midgame|endgame
   const [startDifficulty, setStartDifficulty] = useState("balanced");
@@ -1065,8 +1068,48 @@ export default function ChessEngineLab() {
     };
   }, [targetOrient]);
 
+  /**
+   * The guided post-mortem. Only built once the game is reviewed, and empty
+   * when there is nothing to teach — see walkthrough.js for why that matters.
+   * Against the engine it walks your own mistakes; in hot-seat, the game's.
+   */
+  const walkthrough = useMemo(
+    () =>
+      buildWalkthrough({
+        plyLog,
+        grades: reviewGrades,
+        evalHistory,
+        color: vsHuman ? null : playerColor,
+      }),
+    [plyLog, reviewGrades, evalHistory, vsHuman, playerColor]
+  );
+
+  const activeStep = walkStep != null ? walkthrough[walkStep] : null;
+
+  /** Open a step: show its explanation and put its position on the board. */
+  const goToStep = useCallback(
+    (index) => {
+      const step = walkthrough[index];
+      if (!step) return;
+      setWalkStep(index);
+      // The board shows the position the move produced, which is the one the
+      // explanation is talking about.
+      goToPly(step.ply + 1);
+    },
+    [walkthrough, goToPly]
+  );
+
+  // A new game, or a fresh review, invalidates whatever step was open.
+  useEffect(() => {
+    setWalkStep(null);
+  }, [reviewGrades, plyLog.length === 0]);
+
   const boardArrows = useMemo(() => {
     if (!teacherMode) return [];
+    // A walkthrough step owns the board while it is open: it draws the move
+    // that was played against the move that should have been, and the live
+    // coaching arrows would only be noise over a position from the past.
+    if (activeStep) return activeStep.arrows;
     const arrows = [];
     if (lastMove && lastMove.piece[0] === engineColor) {
       arrows.push({
@@ -1085,7 +1128,7 @@ export default function ChessEngineLab() {
       });
     }
     return arrows;
-  }, [teacherMode, lastMove, threats, hint, hintLevel, engineColor]);
+  }, [teacherMode, lastMove, threats, hint, hintLevel, engineColor, activeStep]);
 
   // Everything drawn on the board — coach arrows, your sketched arrows, and
   // the drag preview — flipped together to match the display orientation.
@@ -1860,9 +1903,20 @@ export default function ChessEngineLab() {
 
           {teacherMode && boardArrows.length > 0 && (
             <p className="arrow-legend">
-              Arrows: <span className="lg lg-red">red</span> = threat against you
-              {" · "}<span className="lg lg-green">green</span> = hint for you
-              {" · "}<span className="lg lg-blue">blue</span> = engine's last move
+              {activeStep ? (
+                // A walkthrough step redefines what the arrows mean, so the
+                // legend has to follow or it is actively misleading.
+                <>
+                  Arrows: <span className="lg lg-red">red</span> = the move you played
+                  {" · "}<span className="lg lg-green">green</span> = what was better
+                </>
+              ) : (
+                <>
+                  Arrows: <span className="lg lg-red">red</span> = threat against you
+                  {" · "}<span className="lg lg-green">green</span> = hint for you
+                  {" · "}<span className="lg lg-blue">blue</span> = engine's last move
+                </>
+              )}
             </p>
           )}
 
@@ -2075,6 +2129,100 @@ export default function ChessEngineLab() {
         </section>
 
         <aside className="panel-column">
+          {teacherMode && gameOver && (
+            <section className="panel panel-walk" aria-label="Guided walkthrough">
+              <h2>Step-by-step</h2>
+              {!reviewGrades ? (
+                // The walkthrough needs the full review, and against the engine
+                // the only other way to start one is the result card — which is
+                // dismissable. So it offers its own.
+                <>
+                  <p className="muted small">
+                    Analyse every move of the game you just played, then walk
+                    the moments that cost you something.
+                  </p>
+                  <button
+                    className="reset"
+                    onClick={requestReview}
+                    disabled={!!reviewProgress || plyLog.length === 0}
+                  >
+                    {reviewProgress ? "Analysing…" : "Analyse this game"}
+                  </button>
+                  {reviewProgress && (
+                    <p className="muted small" role="status" aria-live="polite">
+                      Move {reviewProgress.done} of {reviewProgress.total}…
+                    </p>
+                  )}
+                </>
+              ) : walkthrough.length === 0 ? (
+                <p className="muted small">
+                  Nothing to walk through — every move was near the engine's
+                  choice. There is no lesson hiding in a clean game.
+                </p>
+              ) : activeStep == null ? (
+                <>
+                  <p className="muted small">
+                    {walkthrough.length} moment{walkthrough.length > 1 ? "s" : ""} worth a second
+                    look. Each one puts the position back on the board and shows what was played
+                    against what should have been.
+                  </p>
+                  <button className="reset" onClick={() => goToStep(0)}>
+                    Walk me through it
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="walk-head">
+                    <span className={"badge badge-" + (activeStep.bucket === "inaccuracy" ? "warn" : "bad")}>
+                      {activeStep.verdict}
+                    </span>
+                    <span className="walk-move">
+                      {activeStep.moveNumber}. {activeStep.color === WHITE ? "" : "… "}
+                      {activeStep.moveStr}
+                    </span>
+                  </div>
+                  <ul className="walk-points">
+                    {activeStep.points.map((point, i) => (
+                      <li key={i}>{point}</li>
+                    ))}
+                  </ul>
+                  <p className="walk-legend muted small">
+                    <span className="lg lg-red">red</span> what you played ·{" "}
+                    <span className="lg lg-green">green</span> what was better
+                  </p>
+                  <div className="walk-nav">
+                    <button
+                      className="chip"
+                      onClick={() => goToStep(walkStep - 1)}
+                      disabled={walkStep === 0}
+                    >
+                      ◀ Previous
+                    </button>
+                    <span className="move-nav-pos">
+                      {walkStep + 1} / {walkthrough.length}
+                    </span>
+                    <button
+                      className="chip"
+                      onClick={() => goToStep(walkStep + 1)}
+                      disabled={walkStep >= walkthrough.length - 1}
+                    >
+                      Next ▶
+                    </button>
+                    <button
+                      className="link-button"
+                      onClick={() => {
+                        setWalkStep(null);
+                        goToPly(plyLog.length);
+                      }}
+                    >
+                      Done
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
+
           {vsHuman && gameOver && (
             <section className="panel panel-review" aria-label="Coach report">
               <h2>Coach report</h2>

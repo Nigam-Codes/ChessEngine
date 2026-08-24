@@ -1292,3 +1292,38 @@ button {
 .board-nav .move-nav-pos {
   font-size: 0.75rem;
 }
+
+/* ---- Guided walkthrough ---- */
+
+.panel-walk { border-color: var(--accent); }
+
+.walk-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.walk-move {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.walk-points {
+  margin: 0 0 0.6rem;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.92rem;
+}
+
+.walk-legend { margin: 0 0 0.6rem; }
+
+.walk-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
