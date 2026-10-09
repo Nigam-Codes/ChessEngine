@@ -1427,3 +1427,35 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .online-dot { animation: none !important; }
 }
+
+/* ---- App chrome: install and update ---- */
+
+/* Notches and home indicators: keep content out from under them when the app
+   runs full-screen from the home screen. */
+.lab {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+  padding-bottom: max(2.5rem, calc(env(safe-area-inset-bottom) + 4.5rem));
+}
+
+.app-chrome {
+  position: fixed;
+  left: 50%;
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(calc(100% - 2rem), 560px);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 0.9rem;
+}
+
+.app-chrome > span { flex: 1 1 14rem; }
+.app-chrome .reset { padding: 0.35rem 0.8rem; }
