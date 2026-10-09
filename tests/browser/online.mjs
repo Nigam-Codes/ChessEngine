@@ -193,13 +193,30 @@ main(async () => {
 
   /* --- Leaving ----------------------------------------------------------------*/
 
+  // Leave, and go straight into a new game. The old line is kept open a
+  // moment so the resignation can get out, and as it finally closes it fires
+  // its own "closed" event — which must not land on the new game. Without
+  // the guard in useOnlineSession, the new game reads "Disconnected" a
+  // quarter-second after it was created. (Clicking straight away is the
+  // point: wait in between and the old line is gone before the new one starts.)
   await host.page.click('.online-box button:has-text("Resign and leave")');
+  await host.page.click('button:has-text("Create game")');
+
   await guest.page.waitForSelector(".result-card", { timeout: 20000 });
   if ((await guest.page.$eval(".result-headline", (el) => el.innerText.trim())) !== "You win") {
     throw new Error("walking out of a game should count as resigning it");
   }
-  await host.page.waitForSelector('button:has-text("Create game")', { timeout: 5000 });
-  console.log("PASS: leaving mid-game resigns it, and the leaver is back at the lobby");
+  console.log("PASS: leaving mid-game resigns it — the opponent is told they won");
+
+  await waitFor(host.page, () => /Waiting for your opponent/.test(document.querySelector(".online-status")?.innerText || ""));
+  await host.page.waitForTimeout(1200);
+  const still = await host.page
+    .$eval(".online-status", (el) => el.innerText)
+    .catch(() => "(back at the lobby)");
+  if (!/Waiting for your opponent/.test(still)) {
+    throw new Error(`a new game created right after leaving was cut off: "${still}"`);
+  }
+  console.log("PASS: a new game created the instant after leaving isn't hit by the old line closing");
 
   if (errors.length) throw new Error("console errors: " + errors.join(" | "));
   console.log("\nALL ONLINE TESTS PASSED");

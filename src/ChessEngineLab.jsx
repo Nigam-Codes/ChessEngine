@@ -24,6 +24,7 @@ import { outcomeFor, TERMINAL, DRAW_REASONS } from "./rules.js";
 import { premoveSquares, resolvePremove } from "./premove.js";
 import { openingForMoves } from "./openings.js";
 import { THEMES, loadTheme, applyTheme } from "./themes.js";
+import { isNative } from "./pwa.js";
 import { cardModel, drawCard, CARD_WIDTH, CARD_HEIGHT } from "./share.js";
 import { buildWalkthrough } from "./walkthrough.js";
 import { useOnlineSession, loadSession, saveSession } from "./useOnlineSession.js";
@@ -1231,6 +1232,32 @@ export default function ChessEngineLab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // In the native app, a game link can arrive while the app is already running
+  // (once universal/app links are set up — see NATIVE.md). The listener only
+  // records the code; an effect then joins with this render's state rather
+  // than with whatever the listener closed over when it was registered.
+  const [linkJoin, setLinkJoin] = useState(null);
+  useEffect(() => {
+    if (!isNative()) return undefined;
+    let handle;
+    import("@capacitor/app").then(({ App }) => {
+      handle = App.addListener("appUrlOpen", ({ url }) => {
+        const code = parseJoin(url);
+        if (code) setLinkJoin(code);
+      });
+    });
+    return () => handle?.then?.((h) => h.remove());
+  }, []);
+  useEffect(() => {
+    if (!linkJoin) return;
+    setLinkJoin(null);
+    if (online && net.code === linkJoin) return; // already in that game
+    if (!confirmLeaveOnline()) return;
+    enterOnline();
+    net.join(linkJoin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkJoin]);
+
   const createOnlineGame = () => {
     enterOnline();
     net.host();
@@ -1254,7 +1281,7 @@ export default function ChessEngineLab() {
   const leaveOnlineGame = ({ reset = true } = {}) => {
     if (onlineInfo && !gameOver) net.send({ type: "resign", game: onlineInfo.game });
     // Give that last message a moment to leave before the line is cut.
-    setTimeout(() => net.leave(), 250);
+    net.leave({ linger: 250 });
     setOnlineInfo(null);
     setReplayQueue([]);
     setRematch({ mine: false, theirs: false });
@@ -1303,6 +1330,17 @@ export default function ChessEngineLab() {
   const shareInvite = async () => {
     if (!inviteLink) return;
     try {
+      // Android's web view has no Web Share API, so inside the native app the
+      // system share sheet comes from Capacitor's plugin instead.
+      if (isNative()) {
+        const { Share } = await import("@capacitor/share");
+        await Share.share({
+          title: "Play chess with me",
+          text: "I've set up a game — open this to play:",
+          url: inviteLink,
+        });
+        return;
+      }
       await navigator.share({
         title: "Play chess with me",
         text: "I've set up a game — open this to play:",
@@ -2133,7 +2171,7 @@ export default function ChessEngineLab() {
                         <button className="reset" onClick={copyInvite}>
                           {copied ? "Copied!" : "Copy"}
                         </button>
-                        {typeof navigator !== "undefined" && navigator.share && (
+                        {(isNative() || (typeof navigator !== "undefined" && navigator.share)) && (
                           <button className="reset" onClick={shareInvite}>
                             Share
                           </button>

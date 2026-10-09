@@ -18,6 +18,11 @@ how many positions were examined, how many branches alpha-beta pruning
 skipped, and the engine's top three candidate moves with their scores, so
 you can compare your instinct against its ranking.
 
+**Play anyone online**: create a game, send the link, and whoever opens it
+is your opponent — in any browser, no account. And it **installs on your
+phone** like an app (iOS and Android), working offline against the engine.
+See [Play online](#play-online) and [Install it on your phone](#install-it-on-your-phone).
+
 Built with React + Vite. The engine itself (`src/engine.js`) is plain
 JavaScript with no dependencies, written to be readable as a teaching
 reference.
@@ -30,6 +35,10 @@ npm run dev        # start the dev server
 npm test           # run the engine sanity tests
 npm run build      # production build (output in dist/)
 npm run preview    # serve the production build locally
+npm run test:browser   # headless-Chromium suites (needs `npm run preview` running)
+npm run icons      # regenerate every icon and splash screen
+npm run android    # open the Android app in Android Studio (see NATIVE.md)
+npm run ios        # open the iPhone app in Xcode, on a Mac (see NATIVE.md)
 ```
 
 Pushing to `main` deploys automatically to GitHub Pages via
@@ -166,6 +175,58 @@ worker grades every ply, then builds a separate report for each colour:
 - the habits that showed up in that player's moves, with the advice for each,
   so both players leave with something specific to work on.
 
+## Play online
+
+The **🌐 Online** tab plays someone on another device. Pick a colour, tap
+**Create game**, and send the link (or the 8-character code — it has no
+look-alike characters, because people read codes out). Whoever opens it is
+your opponent: in any browser, or in the installed app, with no account.
+
+Moves travel **directly between the two devices** over WebRTC. A free public
+matchmaking server (PeerJS) only introduces them; there is no game server.
+The networking sits behind a five-method interface in `src/net/`, so a hosted
+relay could replace it later without touching the game.
+
+It is built for phones, which drop connections constantly:
+
+- **Switching apps is fine.** iOS suspends the app the moment you switch to
+  Messages to send the link; both sides reconnect on their own when it comes
+  back, and a heartbeat notices a vanished player within seconds.
+- **Nothing is lost.** Every move carries its number. On reconnecting, the two
+  devices compare move lists and the one that is behind catches up, so a move
+  made while the other phone was asleep is waiting when it wakes.
+- **Even an app that was killed resumes** — the game is saved after every
+  move, so reopening the app puts you straight back in it.
+- **The other device is not trusted.** Every message is checked before
+  anything reads it, and a move is applied only if it is legal on *your*
+  board. A misbehaving peer cannot make you play an illegal move.
+
+Resign, draw offers and rematches (colours swap) go over the wire; leaving
+an unfinished game resigns it, so your opponent sees a result rather than
+"reconnecting" forever. Premoves work against people too. Undo is off — a
+takeback would need your opponent's say-so.
+
+**Limits, honestly:** both players must have the app open at the same time
+(this is live play, not correspondence); a small share of mobile networks
+block direct connections, in which case PeerJS's free relay is tried; and
+because the devices connect directly, each learns the other's IP address.
+
+## Install it on your phone
+
+It is a **progressive web app**: open the site, then
+
+- **iPhone / iPad** — Safari's **Share** button → **Add to Home Screen**
+  (the app explains this itself, once);
+- **Android** — accept the **Install** prompt the app offers.
+
+It then opens full-screen from its own icon and **works with no signal** —
+the engine, Learn mode and everything except online play. Updates are
+announced with a *Reload* button rather than swapped in mid-game.
+
+For the App Store and Google Play, the same app is wrapped as native iOS and
+Android projects in `android/` and `ios/` — see **[NATIVE.md](NATIVE.md)**,
+including how GitHub builds an installable Android APK for you on every push.
+
 ## Learn mode
 
 The **Learn** tab holds "select and play" tutorials: real positions where
@@ -284,9 +345,14 @@ freezes while it thinks.
 
 ## Tests
 
-`npm test` runs `tests/engine.test.js`, which checks that:
+`npm test` runs the unit suites in `tests/` — the engine (20 legal opening
+moves, Fool's Mate, quiescence, castling, en passant, underpromotion), the
+coach, review, draw rules, premoves, openings, the share card, and the online
+protocol, including hostile and malformed messages from the other device.
 
-1. both sides have exactly 20 legal moves in the starting position,
-2. Fool's Mate (1. f3 e5 2. g4 Qh4#) is detected as checkmate, and
-3. quiescence search stops the engine from grabbing a defended pawn at
-   the search horizon.
+`npm run test:browser` runs the headless-Chromium suites in `tests/browser/`
+against `npm run preview`: every mode, end to end. The online suite starts
+its own matchmaking server and plays a real game between two separate browser
+contexts — including one player vanishing mid-game and coming back to a board
+that has caught up. The installable-app suite cuts the network and checks the
+engine still plays. See `tests/browser/README.md`.

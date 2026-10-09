@@ -67,8 +67,12 @@ export function useOnlineSession() {
     setRole(nextRole);
     setCode(nextCode);
     setInbox([]);
-    t.on("status", setStatus);
+    // A transport that has been replaced may still fire as it shuts down.
+    // Only the current one is allowed to touch state.
+    const current = () => transportRef.current === t;
+    t.on("status", (s) => current() && setStatus(s));
     t.on("message", (msg) => {
+      if (!current()) return;
       if (!isValidMessage(msg)) {
         // Counted rather than silently dropped, so a version mismatch or a
         // misbehaving peer is visible instead of looking like lag.
@@ -103,9 +107,18 @@ export function useOnlineSession() {
   /** Drop the oldest message once the game has dealt with it. */
   const consume = useCallback(() => setInbox((box) => box.slice(1)), []);
 
-  const leave = useCallback(() => {
-    transportRef.current?.close();
+  /**
+   * Leave the game. `linger` keeps *this* connection open a moment longer so a
+   * last message (a resignation) can get out — bound to the connection being
+   * left, so it can never cut off a new game started in the meantime.
+   */
+  const leave = useCallback(({ linger = 0 } = {}) => {
+    const t = transportRef.current;
     transportRef.current = null;
+    if (t) {
+      if (linger) setTimeout(() => t.close(), linger);
+      else t.close();
+    }
     setStatus("idle");
     setRole(null);
     setCode(null);

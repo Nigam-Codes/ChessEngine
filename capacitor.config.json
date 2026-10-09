@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.nigamcodes.chesslab",
+  "appName": "Chess Lab",
+  "webDir": "dist",
+  "backgroundColor": "#14161c",
+  "ios": {
+    "contentInset": "never"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
