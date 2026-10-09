@@ -26,6 +26,20 @@ import { openingForMoves } from "./openings.js";
 import { THEMES, loadTheme, applyTheme } from "./themes.js";
 import { cardModel, drawCard, CARD_WIDTH, CARD_HEIGHT } from "./share.js";
 import { buildWalkthrough } from "./walkthrough.js";
+import { useOnlineSession, loadSession, saveSession } from "./useOnlineSession.js";
+import {
+  encodeMove,
+  moveToUci,
+  uciToWire,
+  moveFromWire,
+  classifyIncoming,
+  resolveSync,
+  shareLink,
+  parseJoin,
+  formatCode,
+  PUBLIC_URL,
+  PROTOCOL_VERSION,
+} from "./online.js";
 import {
   TIME_CONTROLS,
   DEFAULT_CONTROL,
@@ -72,7 +86,23 @@ const PROMOTION_NAMES = { q: "Queen", r: "Rook", b: "Bishop", n: "Knight" };
 // stylesheet — keep the two in step.
 const FLIP_MS = 160;
 
-function statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended) {
+function statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended, online = false) {
+  // Online there is a "you" and an "opponent", not two colours at one desk.
+  if (online) {
+    if (ended) {
+      if (ended.outcome === "agreed") return "Draw agreed.";
+      return ended.winner === playerColor ? "Your opponent resigned — you win!" : "You resigned.";
+    }
+    if (status === "checkmate") {
+      return turn !== playerColor ? "Checkmate — you win!" : "Checkmate — your opponent wins.";
+    }
+    if (status === "stalemate") return "Stalemate — draw.";
+    if (status === "insufficient") return "Draw — neither side has enough material to mate.";
+    if (status === "fifty-move") return "Draw — fifty moves with no pawn move or capture.";
+    if (status === "repetition") return "Draw — the same position three times.";
+    if (turn !== playerColor) return "Your opponent's move…";
+    return status === "check" ? "Check! Your move." : "Your move.";
+  }
   // Resignation and agreement aren't facts about the position — nothing on the
   // board says the game stopped — so they're carried separately and read first.
   if (ended) {
@@ -124,7 +154,7 @@ function formatScore(cp) {
 
 export default function ChessEngineLab() {
   const [mode, setMode] = useState("play"); // "play" | "learn"
-  const [opponent, setOpponent] = useState("engine"); // "engine" | "human"
+  const [opponent, setOpponent] = useState("engine"); // "engine" | "human" | "online"
   const [playerColor, setPlayerColor] = useState(WHITE);
   const [board, setBoard] = useState(initialBoard);
   const [turn, setTurn] = useState(WHITE);
@@ -237,10 +267,28 @@ export default function ChessEngineLab() {
   const yourMovesRef = useRef([]);
 
   const engineColor = opposite(playerColor);
-  const vsHuman = opponent === "human";
+  // Online is a human opponent who happens to be elsewhere, so it shares the
+  // hot-seat path ("no engine") and overrides only where it really differs.
+  const online = opponent === "online";
+  const vsHuman = opponent !== "engine";
   // The side the person at the keyboard may move right now. Against the engine
-  // that's always your colour; in hot-seat it's simply whoever is on move.
-  const controlledColor = vsHuman ? turn : playerColor;
+  // or online that's always your colour; in hot-seat it's whoever is on move.
+  const controlledColor = vsHuman && !online ? turn : playerColor;
+
+  // ---- Online play -------------------------------------------------------
+  const net = useOnlineSession();
+  // The game in progress with the other device: its number (rematches count
+  // up, so a stray message from the last game can't touch this one) and the
+  // host's colour. Null until both players are connected.
+  const [onlineInfo, setOnlineInfo] = useState(null);
+  const [hostPick, setHostPick] = useState("w"); // "w" | "b" | "random"
+  // Moves to apply that came from the other device — one per render, so each
+  // is checked against the board as it really is by then. { uci, quiet }.
+  const [replayQueue, setReplayQueue] = useState([]);
+  const [rematch, setRematch] = useState({ mine: false, theirs: false });
+  const [joinInput, setJoinInput] = useState("");
+  const [joinError, setJoinError] = useState(null);
+  const [copied, setCopied] = useState(false);
 
   const recordHabitEvents = useCallback((events) => {
     if (!events || events.length === 0) return;
@@ -522,9 +570,11 @@ export default function ChessEngineLab() {
    * handler so the promotion picker can play the move the player picked
    * without duplicating any of this — there is still exactly one move path.
    */
-  const playMove = (move) => {
+  const playMove = (move, { remote = false, quiet = false } = {}) => {
     setViewPly(null); // playing on always snaps back to the live game
-    setPremove(null);
+    // A move arriving from the other device must not cancel the premove you
+    // queued against it — releasing that premove is the whole point.
+    if (!remote) setPremove(null);
     setPromotionChoice(null);
     setDrawOffer(null);
     setDrawReply(null);
@@ -575,7 +625,14 @@ export default function ChessEngineLab() {
     setBoard(next);
     setSelected(null);
     setLastMove(move);
-    announceMove(move, { check: newStatus === "check", over: TERMINAL.has(newStatus) });
+    // A burst of moves replayed after a reconnect would be a drum roll.
+    if (!quiet) announceMove(move, { check: newStatus === "check", over: TERMINAL.has(newStatus) });
+    // Your own moves go to the other device. Moves that arrived *from* it are
+    // never echoed back, and if the line is down right now the resync on
+    // reconnect delivers this one anyway.
+    if (online && !remote && onlineInfo) {
+      net.send({ type: "move", game: onlineInfo.game, ply: log.length - 1, move: encodeMove(move) });
+    }
     setStatus(newStatus);
     setHint(null);
     setHintLevel(0);
@@ -618,8 +675,12 @@ export default function ChessEngineLab() {
 
   // True while the engine is searching and the next click should be banked
   // rather than played.
+  // Online, the opponent "thinking" is simply it being their turn.
   const queueingPremove =
-    thinking && !vsHuman && !gameOver && !settingUp && turn !== controlledColor;
+    !gameOver &&
+    !settingUp &&
+    turn !== controlledColor &&
+    (online ? !!onlineInfo : thinking && !vsHuman);
 
   /**
    * Release a queued premove the moment it is your turn again.
@@ -686,6 +747,7 @@ export default function ChessEngineLab() {
       return;
     }
     if (thinking || gameOver || turn !== controlledColor) return;
+    if (online && !onlineInfo) return; // nobody to play yet
 
     // Promotions arrive as four moves to the same square that differ only in
     // what the pawn becomes, so the player has to say which — everything else
@@ -796,7 +858,7 @@ export default function ChessEngineLab() {
    * re-rendered yet at that point.
    */
   const newGame = (color, nextOpponent = opponent, nextTimed = timed) => {
-    const humanOpponent = nextOpponent === "human";
+    const humanOpponent = nextOpponent !== "engine";
     setOpponent(nextOpponent);
     setTimed(nextTimed);
     timedRef.current = nextTimed;
@@ -848,7 +910,10 @@ export default function ChessEngineLab() {
     // A random practice position replaces the opening. The generator runs in
     // the worker (the midgame one plays a short opening against itself), so the
     // board arrives via generate-done rather than synchronously here.
-    if (startMode !== "standard") {
+    // An online game is always a real game from the opening: a generated
+    // position would have to be agreed and sent, and practice is what the
+    // other modes are for.
+    if (startMode !== "standard" && nextOpponent !== "online") {
       setScenario(null);
       setSettingUp(true);
       setThinking(false);
@@ -906,6 +971,7 @@ export default function ChessEngineLab() {
   const resign = () => {
     if (gameOver) return;
     finishGame({ outcome: "resigned", winner: opposite(controlledColor) });
+    if (online && onlineInfo) net.send({ type: "resign", game: onlineInfo.game });
   };
 
   /**
@@ -916,6 +982,12 @@ export default function ChessEngineLab() {
    */
   const offerDraw = () => {
     if (gameOver || thinking) return;
+    if (online) {
+      if (!onlineInfo) return;
+      net.send({ type: "draw-offer", game: onlineInfo.game });
+      setDrawReply("Draw offered — waiting for your opponent to answer.");
+      return;
+    }
     if (vsHuman) {
       setDrawOffer({ from: turn });
       return;
@@ -928,7 +1000,331 @@ export default function ChessEngineLab() {
   /** Hot-seat: the player who was asked answers. */
   const answerDraw = (accepted) => {
     setDrawOffer(null);
+    if (online && onlineInfo) net.send({ type: "draw-answer", game: onlineInfo.game, accept: accepted });
     if (accepted) finishGame({ outcome: "agreed", winner: null });
+  };
+
+  /* ---------------- Online play ---------------- */
+
+  /** Begin game `game` with the host on `hostColor`; we take whichever side that leaves. */
+  const startOnlineGame = (game, hostColor) => {
+    const mine = net.role === "host" ? hostColor : opposite(hostColor);
+    newGame(mine, "online", false);
+    setOnlineInfo({ game, hostColor });
+    setReplayQueue([]);
+    setRematch({ mine: false, theirs: false });
+  };
+
+  // Every move this device knows about — played, or received and waiting to
+  // be applied. This is what is compared on reconnect, so a move that is
+  // already queued is never asked for twice.
+  const knownMoves = () => [
+    ...plyLog.map((p) => moveToUci(p.played)),
+    ...replayQueue.map((q) => q.uci),
+  ];
+
+  /**
+   * Handle the oldest message from the other device. One per render, for the
+   * same reason as the replay queue: each needs the game as it is *now*.
+   */
+  useEffect(() => {
+    if (!online || net.inbox.length === 0) return;
+    const msg = net.inbox[0];
+    net.consume();
+    const isHost = net.role === "host";
+    const mine = knownMoves();
+    const sameGame = onlineInfo && msg.game === onlineInfo.game;
+
+    switch (msg.type) {
+      case "hello":
+        // The line just came up — the first time, or again after a drop. Only
+        // the host acts: it states (or restates) the game, then its moves.
+        if (!isHost) break;
+        if (!onlineInfo) {
+          const hostColor =
+            hostPick === "random" ? (Math.random() < 0.5 ? WHITE : BLACK) : hostPick;
+          net.send({ type: "start", v: PROTOCOL_VERSION, game: 0, hostColor });
+          startOnlineGame(0, hostColor);
+        } else {
+          net.send({
+            type: "start",
+            v: PROTOCOL_VERSION,
+            game: onlineInfo.game,
+            hostColor: onlineInfo.hostColor,
+          });
+          net.send({ type: "sync", game: onlineInfo.game, moves: mine });
+        }
+        break;
+
+      case "start": {
+        if (isHost) break;
+        const fresh =
+          !onlineInfo || onlineInfo.game !== msg.game || onlineInfo.hostColor !== msg.hostColor;
+        if (fresh) startOnlineGame(msg.game, msg.hostColor);
+        // Tell the host where we are so it can fill in anything we missed.
+        net.send({ type: "sync", game: msg.game, moves: fresh ? [] : mine });
+        break;
+      }
+
+      case "move": {
+        if (!sameGame) break;
+        const kind = classifyIncoming(mine.length, msg.ply);
+        if (kind === "apply") {
+          const uci = msg.move.from + msg.move.to + (msg.move.promotion || "");
+          setReplayQueue((q) => [...q, { uci, quiet: false }]);
+        } else if (kind === "gap") {
+          // We missed something. Our list prompts theirs in reply.
+          net.send({ type: "sync", game: onlineInfo.game, moves: mine });
+        }
+        break; // a duplicate — the resend after a drop — is simply ignored
+      }
+
+      case "sync": {
+        if (!sameGame) break;
+        const r = resolveSync(mine, msg.moves, { isHost });
+        if (r.action === "apply") {
+          const quiet = r.moves.length > 1;
+          setReplayQueue((q) => [...q, ...r.moves.map((uci) => ({ uci, quiet }))]);
+        } else if (r.action === "wait") {
+          // They are behind (or forked and we are host): send ours so they
+          // can catch up. They will not reply, so this cannot loop.
+          net.send({ type: "sync", game: onlineInfo.game, moves: mine });
+        } else if (r.action === "replace") {
+          startOnlineGame(onlineInfo.game, onlineInfo.hostColor);
+          setReplayQueue(r.moves.map((uci) => ({ uci, quiet: true })));
+        }
+        break;
+      }
+
+      case "resign":
+        if (sameGame && !gameOver) finishGame({ outcome: "resigned", winner: playerColor });
+        break;
+
+      case "draw-offer":
+        if (sameGame && !gameOver) setDrawOffer({ from: opposite(playerColor) });
+        break;
+
+      case "draw-answer":
+        if (!sameGame) break;
+        if (msg.accept) {
+          if (!gameOver) finishGame({ outcome: "agreed", winner: null });
+        } else {
+          setDrawReply("Your opponent declined the draw.");
+        }
+        break;
+
+      case "rematch":
+        if (sameGame) setRematch((r) => ({ ...r, theirs: true }));
+        break;
+
+      default:
+        break;
+    }
+    // Re-run per message; every other value is read fresh from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, net.inbox]);
+
+  /**
+   * Apply the next move from the other device — but only if it is legal on
+   * the board as it stands. If it isn't, the two games have drifted, so drop
+   * the queue and ask for the whole list rather than guess.
+   */
+  useEffect(() => {
+    if (!online || replayQueue.length === 0 || settingUp) return;
+    if (gameOver) {
+      setReplayQueue([]);
+      return;
+    }
+    const [next, ...rest] = replayQueue;
+    const move = moveFromWire(board, turn, ctx, uciToWire(next.uci));
+    if (!move) {
+      setReplayQueue([]);
+      if (onlineInfo) {
+        net.send({ type: "sync", game: onlineInfo.game, moves: plyLog.map((p) => moveToUci(p.played)) });
+      }
+      return;
+    }
+    setReplayQueue(rest);
+    playMove(move, { remote: true, quiet: next.quiet });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, replayQueue, board, turn, ctx, gameOver, settingUp]);
+
+  /** Offer a rematch. Colours swap, as they do between games over the board. */
+  const requestRematch = () => {
+    if (!onlineInfo) return;
+    net.send({ type: "rematch", game: onlineInfo.game });
+    setRematch((r) => ({ ...r, mine: true }));
+    setCardOpen(false);
+  };
+
+  // Once both have asked, the host starts the next game for both of them.
+  useEffect(() => {
+    if (!online || net.role !== "host" || !onlineInfo) return;
+    if (!rematch.mine || !rematch.theirs) return;
+    const game = onlineInfo.game + 1;
+    const hostColor = opposite(onlineInfo.hostColor);
+    net.send({ type: "start", v: PROTOCOL_VERSION, game, hostColor });
+    startOnlineGame(game, hostColor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online, rematch, onlineInfo, net.role]);
+
+  // Remember the session after every move, so a phone that kills the app in
+  // the background reopens straight back into the same game.
+  useEffect(() => {
+    if (!online || !net.code || !net.role) return;
+    saveSession({
+      role: net.role,
+      code: net.code,
+      hostPick,
+      game: onlineInfo ? onlineInfo.game : null,
+      hostColor: onlineInfo ? onlineInfo.hostColor : null,
+      moves: onlineInfo ? plyLog.map((p) => moveToUci(p.played)) : [],
+    });
+  }, [online, net.code, net.role, onlineInfo, plyLog, hostPick]);
+
+  /** Switch into Online mode with an empty board and no session yet. */
+  const enterOnline = () => {
+    setMode("play");
+    newGame(WHITE, "online", false);
+    setOnlineInfo(null);
+    setReplayQueue([]);
+    setJoinError(null);
+  };
+
+  const resumeSession = (saved) => {
+    setMode("play");
+    if (saved.game == null) {
+      // A host who reloaded before anyone joined: re-open the same room.
+      newGame(WHITE, "online", false);
+      setOnlineInfo(null);
+      setHostPick(saved.hostPick || "w");
+    } else {
+      const mine = saved.role === "host" ? saved.hostColor : opposite(saved.hostColor);
+      newGame(mine, "online", false);
+      setOnlineInfo({ game: saved.game, hostColor: saved.hostColor });
+      setReplayQueue((saved.moves || []).map((uci) => ({ uci, quiet: true })));
+    }
+    if (saved.role === "host") net.host(saved.code);
+    else net.join(saved.code);
+  };
+
+  // On first load: a #join= link takes you straight into that game; otherwise
+  // a remembered session resumes. The fragment is cleared afterwards so a
+  // later reload doesn't re-join a game you have since left.
+  const bootedRef = useRef(false);
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    const fromLink = parseJoin(window.location.hash);
+    const saved = loadSession();
+    if (fromLink) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      if (saved && saved.role === "guest" && saved.code === fromLink) {
+        resumeSession(saved);
+      } else {
+        enterOnline();
+        net.join(fromLink);
+      }
+      return;
+    }
+    if (saved) resumeSession(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const createOnlineGame = () => {
+    enterOnline();
+    net.host();
+  };
+
+  const joinOnlineGame = () => {
+    const code = parseJoin(joinInput);
+    if (!code) {
+      setJoinError("That doesn't look like a game link or code. Codes are 8 characters, like k7m2-qx9p.");
+      return;
+    }
+    enterOnline();
+    net.join(code);
+  };
+
+  /**
+   * Leave the online game. Walking out of an unfinished game is resigning it —
+   * saying so means the opponent sees a result instead of "reconnecting"
+   * forever.
+   */
+  const leaveOnlineGame = ({ reset = true } = {}) => {
+    if (onlineInfo && !gameOver) net.send({ type: "resign", game: onlineInfo.game });
+    // Give that last message a moment to leave before the line is cut.
+    setTimeout(() => net.leave(), 250);
+    setOnlineInfo(null);
+    setReplayQueue([]);
+    setRematch({ mine: false, theirs: false });
+    saveSession(null);
+    if (reset) newGame(WHITE, "online", false);
+  };
+
+  /** Called before leaving Online mode for another tab. False means stay. */
+  const confirmLeaveOnline = () => {
+    if (!online) return true;
+    if (
+      onlineInfo &&
+      !gameOver &&
+      !window.confirm("Leave this online game? Leaving counts as resigning.")
+    ) {
+      return false;
+    }
+    leaveOnlineGame({ reset: false });
+    return true;
+  };
+
+  // The link you send. Inside the native app the page's own address is
+  // capacitor://localhost, which means nothing to anyone else, so use the
+  // published address instead.
+  const shareBase =
+    typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.()
+      ? PUBLIC_URL
+      : typeof window !== "undefined"
+        ? window.location.origin + window.location.pathname
+        : PUBLIC_URL;
+  const inviteLink = net.code && net.role === "host" ? shareLink(net.code, shareBase) : null;
+
+  const copyInvite = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+    } catch {
+      // Clipboard blocked (insecure context, or permissions): select the field
+      // so a long-press or Ctrl+C still works.
+      document.querySelector(".invite-link")?.select();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const shareInvite = async () => {
+    if (!inviteLink) return;
+    try {
+      await navigator.share({
+        title: "Play chess with me",
+        text: "I've set up a game — open this to play:",
+        url: inviteLink,
+      });
+    } catch {
+      // Cancelled, or no share sheet on this device. Copying is the fallback.
+      copyInvite();
+    }
+  };
+
+  const ONLINE_STATUS = {
+    idle: "",
+    registering: "Connecting to the matchmaking server…",
+    waiting: "Waiting for your opponent to open the link…",
+    connected: "Connected",
+    reconnecting:
+      net.role === "guest" && !onlineInfo
+        ? "Looking for the host — they may still be sending you the link…"
+        : "Connection lost — reconnecting…",
+    closed: "Disconnected",
+    error: "Couldn't reach the matchmaking server. Check your connection and try again.",
   };
 
   // The theme is a document attribute, so it has to be pushed out to the DOM
@@ -1026,7 +1422,7 @@ export default function ChessEngineLab() {
   // the engine that's your colour; in hot-seat with auto-flip it follows the
   // side to move, so each player sees their own pieces nearest them. The manual
   // Flip button XORs on top of either.
-  const bottomColor = vsHuman ? (autoFlip ? turn : WHITE) : playerColor;
+  const bottomColor = vsHuman && !online ? (autoFlip ? turn : WHITE) : playerColor;
   const targetOrient = (bottomColor === BLACK) !== flipped;
 
   // Card-flip animation. `orientBlack` lags one beat behind the target so the
@@ -1212,12 +1608,16 @@ export default function ChessEngineLab() {
       winner == null
         ? "Draw"
         : vsHuman
-          ? `${COLOR_NAME[winner]} wins`
+          ? online
+            ? winner === playerColor
+              ? "You win"
+              : "Your opponent wins"
+            : `${COLOR_NAME[winner]} wins`
           : winner === playerColor
             ? "You win"
             : "Engine wins";
     return { headline, how, winner };
-  }, [gameOver, ended, flagged, status, turn, vsHuman, playerColor]);
+  }, [gameOver, ended, flagged, status, turn, vsHuman, playerColor, online]);
 
   // Send focus to the card when it opens, so keyboard users land on it and
   // Escape is obviously the way out.
@@ -1577,30 +1977,44 @@ export default function ChessEngineLab() {
           role="tab"
           aria-selected={mode === "play" && !vsHuman && !timed}
           onClick={() => {
+            if (opponent === "engine" && !timed) return setMode("play");
+            if (!confirmLeaveOnline()) return;
             setMode("play");
-            if (vsHuman || timed) newGame(WHITE, "engine", false);
+            newGame(WHITE, "engine", false);
           }}
         >
           ♟ Play
         </button>
         <button
-          className={"mode-tab" + (mode === "play" && vsHuman ? " active" : "")}
+          className={"mode-tab" + (mode === "play" && opponent === "human" ? " active" : "")}
           role="tab"
-          aria-selected={mode === "play" && vsHuman}
+          aria-selected={mode === "play" && opponent === "human"}
           onClick={() => {
+            if (opponent === "human" && !timed) return setMode("play");
+            if (!confirmLeaveOnline()) return;
             setMode("play");
-            if (!vsHuman || timed) newGame(WHITE, "human", false);
+            newGame(WHITE, "human", false);
           }}
         >
           👥 2 Players
+        </button>
+        <button
+          className={"mode-tab" + (mode === "play" && online ? " active" : "")}
+          role="tab"
+          aria-selected={mode === "play" && online}
+          onClick={() => (online ? setMode("play") : enterOnline())}
+        >
+          🌐 Online
         </button>
         <button
           className={"mode-tab" + (mode === "play" && timed ? " active" : "")}
           role="tab"
           aria-selected={mode === "play" && timed}
           onClick={() => {
+            if (timed) return setMode("play");
+            if (!confirmLeaveOnline()) return;
             setMode("play");
-            if (!timed) newGame(WHITE, "engine", true);
+            newGame(WHITE, "engine", true);
           }}
         >
           ⏱ Blitz
@@ -1625,9 +2039,146 @@ export default function ChessEngineLab() {
                role="status" aria-live="polite">
             {settingUp
               ? "Setting up a position…"
-              : statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended)}
+              : online && !onlineInfo
+                ? net.code
+                  ? "Waiting for your opponent…"
+                  : "Start a game, or join one."
+                : statusText(status, turn, thinking, playerColor, vsHuman, flagged, ended, online)}
             {(thinking || settingUp) && <span className="spinner" aria-hidden="true" />}
           </div>
+
+          {online && (
+            <section className="online-box" aria-label="Online game">
+              {!net.code ? (
+                // The lobby: start a game, or join one from a link or code.
+                <>
+                  <p className="online-lede">
+                    Play anyone, anywhere: create a game and send them the link. It opens
+                    in any browser or in the app — no account needed.
+                  </p>
+                  <div className="start-picker" role="group" aria-label="Your colour">
+                    <span className="muted small">You play</span>
+                    {[
+                      ["w", "♔ White"],
+                      ["b", "♚ Black"],
+                      ["random", "🎲 Random"],
+                    ].map(([id, text]) => (
+                      <button
+                        key={id}
+                        className={"chip" + (hostPick === id ? " chip-active" : "")}
+                        onClick={() => setHostPick(id)}
+                        aria-pressed={hostPick === id}
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="reset online-create" onClick={createOnlineGame}>
+                    Create game &amp; get a link
+                  </button>
+                  <form
+                    className="join-row"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      joinOnlineGame();
+                    }}
+                  >
+                    <input
+                      className="join-input"
+                      value={joinInput}
+                      onChange={(e) => {
+                        setJoinInput(e.target.value);
+                        setJoinError(null);
+                      }}
+                      placeholder="…or paste a link or code"
+                      aria-label="Game link or code to join"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                    />
+                    <button className="reset" type="submit" disabled={!joinInput.trim()}>
+                      Join
+                    </button>
+                  </form>
+                  {joinError && (
+                    <p className="online-error" role="alert">
+                      {joinError}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className={"online-status online-" + net.status} role="status" aria-live="polite">
+                    <span className="online-dot" aria-hidden="true" />
+                    {ONLINE_STATUS[net.status] || net.status}
+                    {onlineInfo && net.status === "connected" && (
+                      <span className="muted"> · you play {COLOR_NAME[playerColor]}</span>
+                    )}
+                  </p>
+
+                  {inviteLink && !onlineInfo && (
+                    <div className="invite">
+                      <p className="muted small">
+                        Send this link to your opponent. Game code{" "}
+                        <strong className="invite-code">{formatCode(net.code)}</strong>
+                      </p>
+                      <div className="join-row">
+                        <input
+                          className="join-input invite-link"
+                          value={inviteLink}
+                          readOnly
+                          onFocus={(e) => e.target.select()}
+                          aria-label="Invitation link"
+                        />
+                        <button className="reset" onClick={copyInvite}>
+                          {copied ? "Copied!" : "Copy"}
+                        </button>
+                        {typeof navigator !== "undefined" && navigator.share && (
+                          <button className="reset" onClick={shareInvite}>
+                            Share
+                          </button>
+                        )}
+                      </div>
+                      <p className="muted small">
+                        Keep this screen open until they join — on a phone, switching apps to
+                        send the link is fine; the game reconnects when you come back.
+                      </p>
+                    </div>
+                  )}
+
+                  {gameOver && onlineInfo && (
+                    <p className="online-rematch">
+                      {rematch.mine && !rematch.theirs && "Rematch offered — waiting for your opponent…"}
+                      {rematch.theirs && !rematch.mine && (
+                        <>
+                          Your opponent wants a rematch.{" "}
+                          <button className="reset" onClick={requestRematch}>
+                            Accept
+                          </button>
+                        </>
+                      )}
+                      {!rematch.mine && !rematch.theirs && (
+                        <button className="reset" onClick={requestRematch}>
+                          Offer a rematch
+                        </button>
+                      )}
+                    </p>
+                  )}
+
+                  {net.rejected > 0 && (
+                    <p className="muted small">
+                      Ignored {net.rejected} message{net.rejected > 1 ? "s" : ""} this app didn't
+                      recognise — is your opponent on an older version?
+                    </p>
+                  )}
+
+                  <button className="link-button" onClick={() => leaveOnlineGame()}>
+                    {onlineInfo && !gameOver ? "Resign and leave" : "Leave"}
+                  </button>
+                </>
+              )}
+            </section>
+          )}
 
           {timed && (
             <div className="clocks" aria-label="Clocks">
@@ -1676,8 +2227,9 @@ export default function ChessEngineLab() {
           {drawOffer && (
             <div className="draw-offer" role="alertdialog" aria-label="Draw offer">
               <span>
-                {COLOR_NAME[drawOffer.from]} offers a draw. {COLOR_NAME[opposite(drawOffer.from)]},
-                do you accept?
+                {online
+                  ? "Your opponent offers a draw. Do you accept?"
+                  : `${COLOR_NAME[drawOffer.from]} offers a draw. ${COLOR_NAME[opposite(drawOffer.from)]}, do you accept?`}
               </span>
               <button className="reset" onClick={() => answerDraw(true)}>Accept</button>
               <button className="reset" onClick={() => answerDraw(false)}>Decline</button>
@@ -1855,7 +2407,7 @@ export default function ChessEngineLab() {
                   <p className="result-headline">{result.headline}</p>
                   <p className="result-how">{result.how}</p>
                   <div className="result-actions">
-                    <button className="reset" onClick={() => newGame(playerColor)}>
+                    <button className="reset" onClick={() => (online ? requestRematch() : newGame(playerColor))}>
                       Rematch
                     </button>
                     <button
@@ -1937,20 +2489,24 @@ export default function ChessEngineLab() {
                 />
               </label>
             )}
-            <button
-              className="reset"
-              onClick={undo}
-              disabled={past.length === 0 || timed}
-              title={
-                vsHuman
-                  ? "Take back the last move"
-                  : "Take back your last move and the engine's reply"
-              }
-            >
-              Undo move
-            </button>
-            <button className="reset" onClick={reset}>New game</button>
-            {!gameOver && !settingUp && (
+            {/* A takeback would need the other player's consent; online it is
+                simply not offered. */}
+            {!online && (
+              <button
+                className="reset"
+                onClick={undo}
+                disabled={past.length === 0 || timed}
+                title={
+                  vsHuman
+                    ? "Take back the last move"
+                    : "Take back your last move and the engine's reply"
+                }
+              >
+                Undo move
+              </button>
+            )}
+            {!online && <button className="reset" onClick={reset}>New game</button>}
+            {!gameOver && !settingUp && (!online || onlineInfo) && (
               <>
                 <button
                   className="reset"
@@ -2005,6 +2561,7 @@ export default function ChessEngineLab() {
                 ))}
               </div>
             )}
+            {!online && (
             <div className="start-picker" role="group" aria-label="Where a new game starts from">
               <span className="muted small">Start from</span>
               {[
@@ -2022,7 +2579,8 @@ export default function ChessEngineLab() {
                 </button>
               ))}
             </div>
-            {startMode !== "standard" && (
+            )}
+            {!online && startMode !== "standard" && (
               <div className="start-picker" role="group" aria-label="Practice difficulty">
                 <span className="muted small">Give me</span>
                 {[
@@ -2094,7 +2652,7 @@ export default function ChessEngineLab() {
                 </button>
               </div>
             )}
-            {vsHuman && (
+            {opponent === "human" && (
               <label
                 className="teacher-toggle"
                 title="Rotate the board after each move so the player to move sees their own pieces at the bottom"

@@ -126,6 +126,20 @@ const run = async () => {
   }
   console.log("PASS: every mode tab opens without error");
 
+  /* --- On a phone: every tab reachable, nothing scrolls sideways ---------- */
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+  const layout = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    offscreen: [...document.querySelectorAll(".mode-tab")]
+      .filter((t) => t.getBoundingClientRect().right > window.innerWidth + 1)
+      .map((t) => t.innerText.trim()),
+  }));
+  if (layout.overflow > 1) throw new Error(`the page scrolls sideways by ${layout.overflow}px at phone width`);
+  if (layout.offscreen.length) throw new Error(`tabs cut off at phone width: ${layout.offscreen.join(", ")}`);
+  console.log("PASS: at phone width every mode tab is reachable and nothing scrolls sideways");
+
   if (errors.length) throw new Error("console errors: " + errors.join(" | "));
   console.log("\nALL CORE BROWSER TESTS PASSED");
   await browser.close();

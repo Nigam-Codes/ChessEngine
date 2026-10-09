@@ -533,8 +533,12 @@ button {
 
 /* ---- Mode tabs & side picker ---- */
 
+/* Wraps rather than overflowing: with five modes a phone cannot fit them on
+   one row, and an unwrapped row both hides the last tab and drags the whole
+   page sideways. */
 .mode-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin: 0 0 1.1rem;
 }
@@ -546,6 +550,11 @@ button {
   padding: 0.45rem 1.2rem;
   font-weight: 700;
   color: var(--text-muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .mode-tab { padding: 0.4rem 0.75rem; }
 }
 
 .mode-tab.active {
@@ -1326,4 +1335,95 @@ button {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+/* ---- Online play ---- */
+
+.online-box {
+  max-width: 560px;
+  margin: 0 0 0.75rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.online-lede { margin: 0; font-size: 0.92rem; }
+
+.online-create { align-self: flex-start; }
+
+.join-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.join-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.join-input:focus { border-color: var(--accent); outline: none; }
+
+.invite { display: flex; flex-direction: column; gap: 0.45rem; }
+.invite p { margin: 0; }
+
+.invite-code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.online-status {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.online-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+
+.online-connected .online-dot { background: #3ecf74; }
+.online-waiting .online-dot,
+.online-registering .online-dot,
+.online-reconnecting .online-dot { background: #f2c14e; animation: online-pulse 1.2s ease-in-out infinite; }
+.online-error .online-dot { background: var(--check-red); }
+
+@keyframes online-pulse {
+  50% { opacity: 0.35; }
+}
+
+.online-error[role="alert"] { margin: 0; color: var(--check-red); font-size: 0.88rem; }
+
+.online-rematch {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.online-box .link-button { align-self: flex-start; }
+
+@media (prefers-reduced-motion: reduce) {
+  .online-dot { animation: none !important; }
 }
