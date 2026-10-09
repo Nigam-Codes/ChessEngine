@@ -210,6 +210,8 @@ takeback would need your opponent's say-so.
 (this is live play, not correspondence); a small share of mobile networks
 block direct connections, in which case PeerJS's free relay is tried; and
 because the devices connect directly, each learns the other's IP address.
+The link is the key to the game — anyone who has it can take the second
+seat — so send it only to the person you are playing.
 
 ## Install it on your phone
 
